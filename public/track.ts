@@ -47,17 +47,15 @@ export function loadChart() {
 
 function renderChart(entries:Entry[]){
     const timings:Map<string, number> = getTotalTime(entries)
-    const datapoints:{y: number, label: string}[] = []
+    const datapoints:{y: number, label: string, color:Color}[] = []
     for (const [k, v] of timings) {
-        datapoints.push({label: k, y: v / 3600})
+        datapoints.push({label: k, y: v / 3600, color: nameToColor(k)})
     }
     console.log(datapoints)
     /* tslint:disable-next-line */
     var chart = new CanvasJS.Chart("chartContainer", {
         animationEnabled: false,
-        title: {
-            text: "Time Use"
-        },
+        title: {},
         data: [{
             type: "pie",
             startAngle: 240,
@@ -67,6 +65,156 @@ function renderChart(entries:Entry[]){
         }]
     });
     chart.render();
+}
+
+interface Bucket {
+    name: string,
+    start: Date,
+    end: Date,
+}
+
+function secondsBetween(a:Date, b:Date): number {
+    return (b.getTime() - a.getTime()) / 1000
+}
+
+function length(span:Span): number {
+    return secondsBetween(span.start, span.end)
+}
+
+function renderBars(entries:Entry[], buckets:Bucket[]) {
+    const seconds:Map<string, number>[] = []
+    for (const bucket of buckets) {
+        const spans = spansInRange(bucket.start, bucket.end, entries)
+        seconds.push(sumByName(spans.map(span => [span.entry.name, length(span)])))
+    }
+    const keys:Set<string> = new Set()
+    for (const m of seconds) {
+        for (const k of m) {
+            keys.add(k[0])
+        }
+    }
+    const data:any[] = []
+    for (const k of keys) {
+        data.push({
+            type: "stackedColumn",
+            showInLegend: false,
+            color: nameToColor(k),
+            name: k,
+            dataPoints: seconds.map((m, i) => ({
+                y: (m.get(k) || 0) / 3600,
+                x: i,
+            }))
+        })
+    }
+    var chart = new CanvasJS.Chart("chartContainer", {
+        animationEnabled: false,
+        title: {},
+        toolTip: {
+            shared: false,
+            contentFormatter: e => {
+                return `${e.entries[0].dataSeries.name}: ${e.entries[0].dataPoint.y?.toFixed(2)}`
+            },
+            content: '{name}: {y} '
+        },
+        axisX: {
+            interval: 1,
+            labelFormatter: e => (e.value >= 0) ? buckets[e.value].name : '???'
+        },
+        axisY: {
+            valueFormatString: "#0h",
+        },
+        data: data
+    })
+   /*
+   var chart = new CanvasJS.Chart("chartContainer", {
+	animationEnabled: true,
+    title: {},
+	axisX: {
+		interval: 1,
+	},
+	axisY:{
+		valueFormatString:"#0h",
+	},
+	data: [{
+		type: "stackedColumn",
+		showInLegend: true,
+		color: "#696661",
+		name: "Q1",
+		dataPoints: [
+			{ y: 6.75, x: 0},
+			{ y: 8.57, x: 1 },
+			{ y: 10.64, x: 2 },
+			{ y: 13.97, x: 3 },
+			{ y: 15.42, x: 4 },
+			{ y: 17.26, x: 5 },
+			{ y: 20.26, x: 6 }
+		]
+		},
+		{        
+			type: "stackedColumn",
+			showInLegend: true,
+			name: "Q2",
+			color: "#EDCA93",
+			dataPoints: [
+				{ y: 6.82, x: 0},
+				{ y: 9.02, x: 1 },
+				{ y: 11.80, x: 2 },
+				{ y: 14.11, x: 3 },
+				{ y: 15.96, x: 4 },
+				{ y: 17.73, x: 5 },
+				{ y: 21.5, x: 6 }
+			]
+		},
+		{        
+			type: "stackedColumn",
+			showInLegend: true,
+			name: "Q3",
+			color: "#695A42",
+			dataPoints: [
+				{ y: 7.28, x: 0 },
+				{ y: 9.72, x: 1 },
+				{ y: 13.30, x: 2 },
+				{ y: 14.9, x: 3 },
+				{ y: 18.10, x: 4 },
+				{ y: 18.68, x: 5 },
+				{ y: 22.45, x: 6 }
+			]
+		},
+		{        
+			type: "stackedColumn",
+			showInLegend: true,
+			name: "Q4",
+			color: "#B6B1A8",
+			dataPoints: [
+				{ y: 8.44, x: 0 },
+				{ y: 10.58, x: 1 },
+				{ y: 14.41, x: 2 },
+				{ y: 16.86, x: 3 },
+				{ y: 10.64, x: 4 },
+				{ y: 21.32, x: 5 },
+				{ y: 26.06, x: 6 }
+			]
+	}]
+    });
+    */
+    chart.render()
+}
+
+export function loadBars() {
+    const entries = loadEntries()
+    const buckets = weeklyBuckets()
+    renderBars(entries, buckets)
+}
+
+function weeklyBuckets(): Bucket[] {
+    const result:Bucket[] = []
+    for (let i = 0; i < 7; i++) {
+        const d = daysAgo(6-i)
+        const start = startOfDay(d)
+        const end = endOfDay(d)
+        result.push({name: renderDay(d), start: start, end: end})
+    }
+    return result
 }
 
 function incrementMap<T>(map:Map<T, number>, x:T, dy:number): void {
@@ -83,6 +231,14 @@ function getTotalTime(entries:Entry[]): Map<string, number> {
             incrementMap(result, entry.name, seconds)
         }
         last = entry
+    }
+    return result
+}
+
+function sumByName(data:[string, number][]): Map<string, number> {
+    const result:Map<string, number> = new Map()
+    for (const datum of data) {
+        incrementMap(result, datum[0], datum[1])
     }
     return result
 }
@@ -194,7 +350,6 @@ function spansInRange(start:Date, end:Date, entries:Entry[]) {
     for (const span of spans(entries).map(clip)) {
         if (span != null) result.push(span)
     }
-    console.log(result)
     return result
 }
 
@@ -214,7 +369,37 @@ export function loadCalendar(): void {
     }
 }
 
-const msPerDay:number = 86400000
+
+type Color = string
+
+type View = Map<string, {color?: Color, expand?: View}>
+
+function split(name:string): [string, string|null] {
+    const n = name.indexOf('/')
+    if (n == 0) return [name, null]
+    else return [name.slice(0, n), name.slice(n+1, 0)]
+}
+
+function group(name: string, view:View): string|null {
+    const [start, rest] = split(name)
+    const v = view.get(start)
+    if (v == undefined) return null
+    if (v.expand == undefined || rest == null) return start 
+    return `${start}/${group(rest, v.expand)}`
+}
+
+function nameToColor(str:string): Color {
+    var hash = 0;
+    for (var i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    var colour = '#';
+    for (var i = 0; i < 3; i++) {
+      var value = (hash >> (i * 8)) & 0xFF;
+      colour += ('00' + value.toString(16)).substr(-2);
+    }
+    return colour;
+}
 
 function calendarSpanHTML(span:Span, start:Date, end:Date): string {
     function frac(d:Date): number {
@@ -225,7 +410,7 @@ function calendarSpanHTML(span:Span, start:Date, end:Date): string {
     console.log('getTime()', dates.map(x => x.getTime()))
     const lengthPercent = 100 * (frac(span.end) - frac(span.start))
     const topPercent = 100 * frac(span.start)
-    const color = '#00B4FC'
+    const color = nameToColor(span.entry.name)
     const style = `top:${topPercent}%; height:${lengthPercent}%; background:${color};`
     return `<div class='event' style='${style}'><div class='spantext'>${span.entry.name}</div></div>`
 }
