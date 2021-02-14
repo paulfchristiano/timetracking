@@ -1,0 +1,38 @@
+.top {
+    margin-left: 2em;
+    margin-top: 1em;
+}
+
+.input {
+    width: 30em;
+    padding: 4px;
+}
+
+.suggestions {
+    position: absolute;
+    border: 1px solid #d4d4d4;
+    border-bottom: none;
+    border-top: none;
+    z-index: 99;
+    /*position the autocomplete items to be the same width as the container:*/
+    top: 100%;
+    left: 0;
+    right: 0;
+} 
+
+.suggestion {
+    padding: 10px;
+    cursor: pointer;
+    background-color: #fff; 
+    border-bottom: 1px solid #d4d4d4; 
+}
+
+.suggestion.focused {
+    background-color: DodgerBlue;
+    color: #ffffff; 
+}
+
+#trackerdiv {
+    position: relative;
+    display: inline-block;
+}

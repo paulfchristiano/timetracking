@@ -1,0 +1,10 @@
+node_modules/
+package-lock.json
+tsconfig.tsbuildinfo
+*.sublime-project
+*.sublime-workspace
+.env
+*.js.map
+*~
+*.swp
+*.DS_Store

@@ -1,0 +1,48 @@
+<html>
+<head>
+    <link rel="modulepreload" href="./track.js">
+    <script type="text/javascript" src="jquery.js"></script>
+    <script type="text/javascript" src="canvasjs.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="calendar.css"/>
+    <script type="module">
+        import {loadCalendar} from '/track.js'
+        loadCalendar()
+    </script>
+    <title>Timetrack</title>
+</head>
+
+<body>
+
+    <div id='calendardiv'>
+        <table class="offset">
+          <thead>
+            <tr id='headerrow'>
+              <th></th>
+              <th>Mon, 18</th>
+              <th>Tue, 19</th>
+              <th>Wed, 20</th>
+              <th>Thu, 21</th>
+              <th>Fri, 22</th>
+              <th>Sat, 23</th>
+              <th>Sun, 24</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr id='contentrow'>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+  
+</body>
+</html>

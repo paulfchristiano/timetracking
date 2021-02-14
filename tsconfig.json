@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "sourceMap": true,
+    "target": "es5",
+    "types": [
+      "jquery", "canvasjs"     
+    ],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext",
+      "es2015"
+    ],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "downlevelIteration": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "es6",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "jsx": "react",
+    "incremental": true
+  },
+  "include": [
+    "public/track.ts",
+    "public/suggester.ts",
+    "public/matcher.ts"
+  ],
+  "files": [
+    "index.ts",
+    "postgre.d.ts",
+    "public/track.ts",
+    "public/suggester.ts",
+    "public/matcher.ts"
+  ]
+}
