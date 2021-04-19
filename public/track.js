@@ -435,6 +435,9 @@ function first(a, b) {
 function last(a, b) {
     return (a > b) ? a : b;
 }
+function mid(a, b) {
+    return new Date((a.getTime() + b.getTime()) / 2);
+}
 function applyToTriples(f, xs) {
     var e_10, _a;
     var a = undefined;
@@ -786,12 +789,15 @@ function applyUpdate(update, entries, spans, otherSpans) {
                 if (toReplace_1.length != 2)
                     throw new Error("Failed to merge");
                 entries = replaceMulti(entries, [entry], []);
-                var start_1 = toReplace_1[0].start;
-                var end_1 = toReplace_1[1].end;
-                start_1.after = update.label;
-                end_1.before = update.label;
-                spans = replaceMulti(spans, toReplace_1, [spanBetween(start_1, end_1)]);
-                otherSpans = otherSpans.map(function (s) { return replaceMulti(s, toReplace_1, [spanBetween(start_1, end_1)]); });
+                var start = toReplace_1[0].start;
+                var end = toReplace_1[1].end;
+                start.after = update.label;
+                end.before = update.label;
+                spans = replaceMulti(spans, toReplace_1, [spanBetween(start, end)]);
+                var newSpan_1 = spanBetween(start, end);
+                newSpan_1.prior = toReplace_1[0].prior;
+                newSpan_1.next = toReplace_1[0].next;
+                otherSpans = otherSpans.map(function (s) { return replaceMulti(s, toReplace_1, [newSpan_1]); });
             }
             break;
         case 'move':
@@ -811,13 +817,26 @@ function multiPopup(spans, callback) {
     var _loop_2 = function (span, first_1, last_1) {
         var labelElem = inputAfterColon('Activity', span.label, function (s) { return callback({ kind: 'relabel', span: span.uid, label: s }); });
         labelElem.css('position', 'relative');
-        labelElem.append("<div class='splitbutton'>+</div>");
+        var splitButton = $("<div class='splitbutton'>+</div>");
+        labelElem.append(splitButton);
+        if (!first_1) {
+            var upButton = $("<div class='upbutton'>↑</div>");
+            upButton.click(function () {
+                callback({ kind: 'merge', entry: span.start.uid, label: span.label });
+            });
+            labelElem.append(upButton);
+        }
+        if (!last_1) {
+            var downButton = $("<div class='downbutton'>↓</div>");
+            downButton.click(function () {
+                callback({ kind: 'merge', entry: span.end.uid, label: span.label });
+            });
+            labelElem.append(downButton);
+        }
         $('#popup').append(labelElem);
         if (!last_1) {
             var timeElem = inputAfterColon('Time', renderTime(span.end.time), function (s) { return callback({ kind: 'move', entry: span.end.uid, time: parseTime(s, span.end.time) }); });
             timeElem.css('position', 'relative');
-            timeElem.append("<div class='upbutton'>↑</div>");
-            timeElem.append("<div class='downbutton'>↓</div>");
             $('#popup').append(timeElem);
         }
     };

@@ -340,6 +340,10 @@ function last(a:Date, b:Date): Date {
     return (a > b) ? a : b
 }
 
+function mid(a:Date, b:Date): Date {
+    return new Date((a.getTime() + b.getTime())/2)
+}
+
 function applyToTriples<X, Y>(f:(a:X|undefined, b:X, c:X|undefined) => Y|null, xs:X[]): Y[] {
     let a:X|undefined = undefined
     let b:X|undefined = undefined
@@ -689,7 +693,10 @@ function applyUpdate(
                 start.after = update.label
                 end.before = update.label
                 spans = replaceMulti(spans, toReplace, [spanBetween(start, end)])
-                otherSpans = otherSpans.map(s => replaceMulti(s, toReplace, [spanBetween(start, end)]))
+                const newSpan = spanBetween(start, end)
+                newSpan.prior = toReplace[0].prior
+                newSpan.next = toReplace[0].next
+                otherSpans = otherSpans.map(s => replaceMulti(s, toReplace, [newSpan]))
             }
             break
         case 'move':
@@ -711,15 +718,28 @@ function multiPopup(spans:Span[], callback: (u:TimeUpdate) => void): void {
             (s:string) => callback({kind: 'relabel', span: span.uid, label: s}) 
         )
         labelElem.css('position', 'relative')
-        labelElem.append("<div class='splitbutton'>+</div>")
+        const splitButton = $("<div class='splitbutton'>+</div>")
+        labelElem.append(splitButton)
+        if (!first) {
+            const upButton = $("<div class='upbutton'>↑</div>")
+            upButton.click(() => {
+                callback({kind: 'merge', entry: span.start.uid, label:span.label})
+            })
+            labelElem.append(upButton)
+        }
+        if (!last) {
+            const downButton = $("<div class='downbutton'>↓</div>")
+            downButton.click(() => {
+                callback({kind: 'merge', entry: span.end.uid, label:span.label})
+            })
+            labelElem.append(downButton)
+        } 
         $('#popup').append(labelElem)
         if (!last) {
             const timeElem = inputAfterColon('Time', renderTime(span.end.time),
                 (s:string) => callback({kind: 'move', entry: span.end.uid, time: parseTime(s, span.end.time)})
             )
             timeElem.css('position', 'relative')
-            timeElem.append("<div class='upbutton'>↑</div>")
-            timeElem.append("<div class='downbutton'>↓</div>")
             $('#popup').append(timeElem)
         }
     }
