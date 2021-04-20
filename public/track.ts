@@ -6,34 +6,59 @@ interface Entry {
     before?: string,
     after?: string,
     time: Date,
-    uid: uid,
+    id: uid,
 }
 
 function exampleEntries(): Entry[] {
     const events = ['breakfast', 'party', 'lunch', 'party', 'dinner', 'sleep', 'breakfast']
     const result: Entry[] = []
     for (let i = 0; i < events.length; i++) {
-        result.push({time: hoursAgo(events.length - i), before: events[i], uid: newUID()})
+        result.push({time: hoursAgo(events.length - i), before: events[i], id: newUID()})
     }
     return result
 }
 
 export function load(): void {
-    const entries:Entry[] = loadEntries()
-    if (entries.length == 0) for (const entry of exampleEntries()) entries.push(entry) 
+    let entries:Entry[] = loadEntries()
+    sortEntries(entries)
     const x = new InputBox(getNames(entries), $('#trackerdiv'))
+    function callback(t:TimeUpdate, entriesList:Entry[][]): Entry[][] {
+        entriesList = applyUpdate(t, [entries].concat(entriesList))
+        entries = entriesList[0]
+        saveEntries(entries)
+        render()
+        return entriesList.slice(1)
+    }
     function render() {
         const elem = $('#inputs')
         const options = $('#options')
         elem.html('')
         options.html('')
-        for (let i = entries.length - 1; i >=0; i--) {
-            const entry = entries[i]
-            elem.append(`<div>[${renderTime(entry.time)}]</div><div>${entry.before}</div>`)
+        for (const [j, [end, start]] of enumerate(listPairsAndEnds(revit(entries)))) {
+            const i = entries.length - j - 1
+            //end = entries[i]
+            if (end != null) {
+                const e = $(`<span class='clickable'>[${renderTime(end.time)}]</span>`)
+                e.click(() => {
+                    evolvingPopup(entries.slice(i-2, i), callback)
+                })
+                const f = $('<div></div>')
+                f.append(e)
+                elem.append(f)
+            }
+            if (start != null && end != null) {
+                const e = $(`<span class='clickable'>${labelFrom(start, end)}</span>`)
+                e.click(() => {
+                    evolvingPopup(entries.slice(i-2, i+1), callback)
+                })
+                const f = $('<div></div>')
+                f.append(e)
+                elem.append(f)
+            }
         }
     }
     function addEntry(s:string) {
-        entries.push({before: s, time: now(), uid: newUID()})
+        entries.push({before: s, time: now(), id: newUID()})
         saveEntries(entries)
         x.setUniverse(getNames(entries))
         render()
@@ -293,8 +318,8 @@ function serializeEntries(entries:Entry[]): string {
 }
 
 function deserializeEntries(s:string): Entry[] {
-    const json = (JSON.parse(s) as {time:number, before:string|undefined, after:string|undefined, uid:uid}[])
-    return json.map(x => ({time: new Date(x.time), before:x.before, after:x.after, uid: x.uid || newUID()}))
+    const json = (JSON.parse(s) as {time:number, before:string|undefined, after:string|undefined, id:uid}[])
+    return json.map(x => ({time: new Date(x.time), before:x.before, after:x.after, id: x.id || newUID()}))
 }
 
 function loadEntries(): Entry[] {
@@ -327,9 +352,6 @@ interface Span {
     start: Entry,
     label: string,
     end: Entry,
-    uid: uid,
-    prior?: Span,
-    next?: Span,
 }
 
 function first(a:Date, b:Date): Date {
@@ -361,16 +383,6 @@ function applyToTriples<X, Y>(f:(a:X|undefined, b:X, c:X|undefined) => Y|null, x
     }
     addIf(xs[xs.length-2], xs[xs.length-1], undefined)
     return result
-}
-
-function linkSpans(spans:Span[]): void {
-    applyToTriples(
-        (a, b, c) => {
-            b.prior = a
-            b.next = c
-            return null
-        }, spans
-    )
 }
 
 function labelFrom(a:Entry, b:Entry): string {
@@ -417,7 +429,6 @@ function spansInRange(start:Date, end:Date, entries:Entry[]): Span[] {
     for (const span of spansFromEntries(entries).map(clip)) {
         if (span != null) result.push(span)
     }
-    linkSpans(result)
     return result
 }
 
@@ -427,42 +438,45 @@ interface CalendarDay {
     index: number,
 }
 
-function spanInDay(span:Span, day:CalendarDay): null|{start:Date, stop:Date} {
-    if (span.end.time < day.start) return null
-    else if (span.start.time > day.end) return null
+function partInDay(start:Date, stop:Date, day:CalendarDay): null|{start:Date, stop:Date} {
+    if (stop < day.start) return null
+    else if (start > day.end) return null
     return {
-        start: last(day.start, span.start.time),
-        stop: first(day.end, span.end.time)
+        start: last(day.start, start),
+        stop: first(day.end, stop)
     } 
 }
 
 export function loadCalendar() {
     let entries = loadEntries()
     sortEntries(entries)
-    let spans = spansFromEntries(entries)
-    linkSpans(spans)
-    function callback(t:TimeUpdate, otherSpans:Span[][]): Span[][] {
-        [entries, spans, otherSpans] = applyUpdate(t, entries, spans, otherSpans)
-        showCalendar(spans, callback)
+    function callback(t:TimeUpdate, entriesList:Entry[][]): Entry[][] {
+        entriesList = applyUpdate(t, [entries].concat(entriesList))
+        entries = entriesList[0]
+        showCalendar(entries, callback)
         saveEntries(entries)
-        return otherSpans
+        return entriesList.slice(1)
     }
-    showCalendar(spans, callback)
+    showCalendar(entries, callback)
 }
 
-function showCalendar(spans:Span[], callback: (t:TimeUpdate, o:Span[][]) => Span[][]): void {
+function showCalendar(entries:Entry[], callback: (t:TimeUpdate, o:Entry[][]) => Entry[][]): void {
     const days:CalendarDay[] = []
     for (let i = 0; i < 7; i++) {
         const d = daysAgo(6-i)
         $(`#headerrow th:nth-child(${i+2})`).text(renderDay(d))
         days.push({start: startOfDay(d), end: endOfDay(d), index: i})
     }
-    for (const span of spans) {
+    for (const [[i, start], [j, end]] of listPairs(enumerate(it(entries)))) {
         for (const day of days) {
-            const range = spanInDay(span, day)
+            const range = partInDay(start.time, end.time, day)
             if (range !== null) {
                 getCalendarColumn(day.index).append(
-                    calendarSpan(span, range.start, range.stop, day.start, day.end, callback)
+                    calendarSpan(
+                        labelFrom(start, end),
+                        range.start, range.stop, day.start, day.end,
+                        entries, i, callback
+                    )
                 )
             }
         }
@@ -506,36 +520,41 @@ type JQE = JQuery<HTMLElement>
 
 //TODO: callback applies the update and then gives the new list of spans
 function calendarSpan(
-    span:Span,
+    label:string,
     spanStart:Date,
     spanEnd:Date,
     start:Date,
     end:Date,
-    callback:(t:TimeUpdate, o:Span[][]) => Span[][]
+    entries:Entry[],
+    firstIndex:number,
+    callback:(t:TimeUpdate, o:Entry[][]) => Entry[][]
 ): JQE {
     function frac(d:Date): number {
         return (d.getTime() - start.getTime()) / (end.getTime() - start.getTime())
     }
     const lengthPercent = 100 * (frac(spanEnd) - frac(spanStart))
     const topPercent = 100 * frac(spanStart)
-    const color = nameToColor(span.label)
+    const color = nameToColor(label)
     const style = `top:${topPercent}%; height:${lengthPercent}%; background:${color};`
-    const result = $(`<div class='event' style='${style}'><div class='spantext'>${span.label}</div></div>`)
-    function popup(spans:Span[]) {
-        function popupCallback(t:TimeUpdate): void {
-            const newSpans:Span[][] = callback(t, [spans])
-            popup(newSpans[0])
-        }
-        multiPopup(spans, popupCallback)
-    }
-    result.click(() => {
-        const spans:Span[] = []
-        if (span.prior !== undefined) spans.push(span.prior)
-        spans.push(span)
-        if (span.next !== undefined) spans.push(span.next)
-        popup(spans)
-    })
+    const result = $(`<div class='event' style='${style}'><div class='spantext'>${label}</div></div>`)
+    const initialEntries:Entry[] = []
+    if (firstIndex > 0) initialEntries.push(entries[firstIndex-1])
+    initialEntries.push(entries[firstIndex])
+    initialEntries.push(entries[firstIndex+1])
+    if (firstIndex+2 < entries.length) initialEntries.push(entries[firstIndex+2])
+    result.click(() => { evolvingPopup(initialEntries, callback) })
     return result
+}
+
+function evolvingPopup(initialEntries:Entry[], callback:(t:TimeUpdate, o:Entry[][]) => Entry[][]): void {
+    function popup(entriesToShow:Entry[]) {
+        function popupCallback(t:TimeUpdate): void {
+            const newEntries:Entry[][] = callback(t, [entriesToShow])
+            popup(newEntries[0])
+        }
+        multiPopup(entriesToShow, popupCallback)
+    }
+    popup(initialEntries)
 }
 
 function makeInput(initial:string, callback:(s:string) => void): JQE {
@@ -564,7 +583,7 @@ function newUID(): uid {
 }
 
 type IDed = {
-    uid: uid,
+    id: uid,
 }
 
 type Update<T> = {
@@ -605,10 +624,10 @@ function applyList<T extends IDed>(update:ListUpdate<T>): (xs:T[]) => T[] {
                 }
                 return result
             case 'apply':
-                return xs.map(x => (x.uid == update.uid) ? update.update(x) : x)
+                return xs.map(x => (x.id == update.uid) ? update.update(x) : x)
             case 'split':
             case 'delete':
-                const n = xs.findIndex(x => x.uid == update.uid)
+                const n = xs.findIndex(x => x.id == update.uid)
                 if (n < 0) throw new Error("Can't find that UID")
                 const insert = (update.kind == 'split') ? update.insert : []
                 return xs.slice(0, n).concat(insert).concat(xs.slice(n+1, undefined))
@@ -618,157 +637,190 @@ function applyList<T extends IDed>(update:ListUpdate<T>): (xs:T[]) => T[] {
     }
 }
 
-type TimeUpdate = {kind: 'relabel', span: uid, label: string}
-    | {kind: 'split', span: uid, time: Date}
-    | {kind: 'merge', entry: uid, label: string}
-    | {kind: 'move', entry: uid, time: Date}
+type TimeUpdate = {kind: 'relabel', before: Entry, after: Entry, label: string}
+    | {kind: 'split', before: Entry, after: Entry, time: Date}
+    | {kind: 'merge', entry: Entry, label: string}
+    | {kind: 'move', entry: Entry, time: Date}
 
-function applyToUID<T extends IDed>(f:(t:T) => T, xs:T[], id:uid): T[] {
-    return xs.map(
-        x => (x.uid == id) ? f(x) : x
-    )
+
+function insertAt<T>(toInsert:T, xs:T[], index:number): T[] {
+    return xs.slice(0, index).concat([toInsert]).concat(xs.slice(index))
 }
 
-//TODO: improve semantics when things are out of order or there are a subset or whatever
-//Right now it puts in all the news if any of the olds are found, at the same spot they were
-function replaceMulti<T extends IDed>(xs:T[], olds:T[], news:T[]): T[] {
-    const i = xs.findIndex(x => olds.findIndex(old => old.uid == x.uid) >= 0)
-    if (i < 0) return xs
-    const j = olds.findIndex(old => old.uid == xs[i].uid)
-    let replaced:number = 0
-    for (let k = 0; k < olds.length - j; k++) {
-        if (i+k < xs.length && xs[i+k].uid == olds[j+k].uid) replaced += 1
-    }
-    return xs.slice(0, i).concat(news).concat(xs.slice(i+replaced))
+function applyTo<T extends IDed>(f:(x:T) => T, xs:T[], x:T): T[] {
+    return xs.map(y => (x.id == y.id) ? f(y) : y)
 }
 
-function spanBetween(a:Entry, b:Entry): Span {
-    return {
-        start: a,
-        end: b,
-        label: labelFrom(a, b),
-        uid: newUID()
+function remove<T extends IDed>(x:T, xs:T[]): T[] {
+    return xs.filter(y => y.id != x.id)
+}
+
+function insertBetween<T extends IDed>(x:T, xs:T[], a:T, b:T):T[] {
+    for (let i = 0; i < xs.length-1; i++) {
+        if (xs[i].id == a.id && xs[i+1].id == b.id) {
+            return insertAt(x, xs, i+1)
+        }
     }
+    return xs
+}
+
+function neighbors<T extends IDed>(x:T, xs:T[]): [T|null, T|null] {
+    for (let i = 0; i < xs.length; i++) {
+        if (xs[i].id == x.id) {
+            return [
+                (i == 0) ? null : xs[i-1],
+                (i == xs.length-1) ? null : xs[i+1]
+            ]
+        }
+    }
+    return [null, null]
 }
 
 //TODO: I think I want this to be the only place that mutates a span or entry?
+//TODO: I want to somehow block the user from moving time past another entry
+//(But at any rate I'll need to figure out how to resolve such conflicts in the DB...)
 function applyUpdate(
     update:TimeUpdate,
-    entries:Entry[],
-    spans:Span[],
-    otherSpans:Span[][] = [],
-): [Entry[], Span[], Span[][]] {
+    entriesList:Entry[][],
+): Entry[][] {
     switch (update.kind) {
         case 'relabel':
-            const toRelabel = spans.find(s => s.uid == update.span)
-            if (toRelabel != undefined) {
-                toRelabel.label = update.label
-                toRelabel.start.after = update.label
-                toRelabel.end.before = update.label
+            return entriesList.map(entries => {
+                entries = applyTo(
+                    entry => ({...entry, after: update.label}),
+                    entries,
+                    update.before
+                )
+                entries = applyTo(
+                    entry => ({...entry, before: update.label}),
+                    entries,
+                    update.after
+                )
+                return entries
+            })
+        case 'split': 
+            const newEntry:Entry = {
+                time: update.time,
+                before: update.before.after || update.after.before,
+                after: update.after.before || update.before.after,
+                id: newUID()
             }
-            break
-        case 'split':
-            const span = spans.find(s => s.uid == update.span)
-            if (span !== undefined) {
-                const newEntry:Entry = {time: update.time, before: span.start.after, after: span.end.before, uid: newUID()}
-                const span1:Span = spanBetween(span.start, newEntry)
-                const span2:Span = spanBetween(newEntry, span.end)
-                span1.prior = span.prior
-                span1.next = span2
-                span2.prior = span1
-                span2.next = span.next
-                spans = replaceMulti(spans, [span], [span1, span2])
-                otherSpans = otherSpans.map(s => replaceMulti(s, [span], [span1, span2]))
-                entries = replaceMulti(entries, [span.start, span.end], [span.start, newEntry, span.end])
-            }
-            break
+            return entriesList.map(entries =>
+                insertBetween(newEntry, entries, update.before, update.after)
+            )
         case 'merge':
-            const entry = entries.find(e => e.uid == update.entry)
-            if (entry != undefined) {
-                const toReplace = spans.filter(span => span.end.uid == update.entry || span.start.uid == update.entry)
-                if (toReplace.length != 2) throw new Error("Failed to merge")
-                entries = replaceMulti(entries, [entry], [])
-                const start = toReplace[0].start
-                const end = toReplace[1].end
-                start.after = update.label
-                end.before = update.label
-                spans = replaceMulti(spans, toReplace, [spanBetween(start, end)])
-                const newSpan = spanBetween(start, end)
-                newSpan.prior = toReplace[0].prior
-                newSpan.next = toReplace[0].next
-                otherSpans = otherSpans.map(s => replaceMulti(s, toReplace, [newSpan]))
-            }
-            break
+            return entriesList.map(entries => {
+                const [a, b] = neighbors(update.entry, entries)
+                if (a != null) a.after = update.label
+                if (b != null) b.before = update.label
+                return remove(update.entry, entries)
+            })
         case 'move':
-            const toModify = entries.find(e => e.uid == update.entry)
-            if (toModify != undefined) {
-                toModify.time = update.time
-            }
-            break
-        default: return assertNever(update)
+            return entriesList.map(entries => applyTo(
+                entry => ({...entry, time: update.time}),
+                entries,
+                update.entry
+            ))
+        default: assertNever(update)
     }
-    return [entries, spans, otherSpans]
 }
 
-function multiPopup(spans:Span[], callback: (u:TimeUpdate) => void): void {
+function* listPairsAndEnds<T>(xs:Generator<T>): Generator<[T|null, T|null]> {
+    let a:T|null = null;
+    let b:T|null = null;
+    for (const x of xs) {
+        a = b
+        b = x
+        yield [a, b]
+    }
+    if (b != null) yield [b, null]
+}
+
+function* listPairs<T>(xs:Generator<T>): Generator<[T, T]> {
+    for (const [x, y] of listPairsAndEnds(xs)) {
+        if (x != null && y != null) yield [x, y]
+    }
+}
+
+function* enumerate<T>(xs:Generator<T>): Generator<[number, T]> {
+    let i = 0;
+    for (const x of xs) {
+        yield [i, x]
+        i += 1
+    }
+}
+
+function* it<T>(xs:T[]): Generator<T> {
+    for (const x of xs) yield x
+}
+function* revit<T>(xs:T[]): Generator<T> {
+    for (let i = xs.length-1; i--; i>=0) yield xs[i]
+}
+
+//Returns the same set of elements, but with booleans flagging first and last
+function* markTails<T>(xs:Generator<T>): Generator<[boolean, boolean, T]> {
+    let first = true;
+    let next:T;
+    const start = xs.next()
+    if (start.done) {
+        return
+    } else {
+        next = start.value
+    }
+    for (const x of xs) {
+        yield [first, false, next]
+        next = x
+        first = false
+    }
+    yield [first, true, next]
+}
+
+//TODO: make all this logic work with entries instead of spans
+function multiPopup(entries:Entry[], callback: (u:TimeUpdate) => void): void {
     $('#popup').attr('active', 'true')
     $('#popup').html('')
-    for (const [span, [first, last]] of firstLast(spans)) {
-        const labelElem = inputAfterColon('Activity', span.label,
-            (s:string) => callback({kind: 'relabel', span: span.uid, label: s}) 
+    function renderEntry(entry:Entry) {
+        const timeElem = inputAfterColon('Time', renderTime(entry.time),
+            (s:string) => callback({kind: 'move', entry: entry, time: parseTime(s, entry.time)})
+        )
+        timeElem.css('position', 'relative')
+        $('#popup').append(timeElem)
+    }
+    function renderSpan(start:Entry, stop:Entry) {
+        const label = labelFrom(start, stop)
+        const labelElem = inputAfterColon('Activity', label,
+            (s:string) => callback({kind: 'relabel', before:start, after:stop, label: s}) 
         )
         labelElem.css('position', 'relative')
-        const splitButton = $("<div class='splitbutton'>+</div>")
+        const splitButton = $("<div class='splitbutton button'>+</div>")
+        splitButton.click(() => {
+            callback({kind: 'split', before: start, after: stop, time: mid(start.time, stop.time)})
+        })
         labelElem.append(splitButton)
-        if (!first) {
-            const upButton = $("<div class='upbutton'>↑</div>")
-            upButton.click(() => {
-                callback({kind: 'merge', entry: span.start.uid, label:span.label})
-            })
-            labelElem.append(upButton)
-        }
-        if (!last) {
-            const downButton = $("<div class='downbutton'>↓</div>")
-            downButton.click(() => {
-                callback({kind: 'merge', entry: span.end.uid, label:span.label})
-            })
-            labelElem.append(downButton)
-        } 
+        const upButton = $("<div class='upbutton button'>↑</div>")
+        upButton.click(() => {
+            callback({kind: 'merge', entry: start, label:label})
+        })
+        labelElem.append(upButton)
+        const downButton = $("<div class='downbutton button'>↓</div>")
+        downButton.click(() => {
+            callback({kind: 'merge', entry: stop, label:label})
+        })
+        labelElem.append(downButton)
         $('#popup').append(labelElem)
-        if (!last) {
-            const timeElem = inputAfterColon('Time', renderTime(span.end.time),
-                (s:string) => callback({kind: 'move', entry: span.end.uid, time: parseTime(s, span.end.time)})
-            )
-            timeElem.css('position', 'relative')
-            $('#popup').append(timeElem)
+    }
+    for (const [start, stop] of listPairsAndEnds(it(entries))) {
+        if (start != null) {
+            renderEntry(start)
+        }
+        if (start != null && stop != null) {
+            renderSpan(start, stop)
         }
     }
 }
 
 function zip<X, Y>(xs:X[], ys:Y[]): [X, Y][] {
     return xs.map((x, i) => [x, ys[i]])
-}
-
-function firstLast<X>(xs:X[]): [X, [boolean, boolean]][] {
-    return zip(xs, zip(xs.map((x, i) => i == 0), xs.map((x, i) => i == xs.length - 1)))
-}
-
-function popup(span:Span): void {
-    $('#popup').attr('active', 'true')
-    $('#popup').html('')
-    if (span.prior != undefined) {
-        $('#popup').append(inputAfterColon('Before', span.label, console.log))
-        // $('#popup').append(`<div>Before: ${span.prior.entry.name}</div>`)
-    }
-    $('#popup').append(`<div>Start: ${renderTime(span.start.time)}</div>`)
-    $('#popup').append(`<div>Name: ${span.label}</div>`)
-    $('#popup').append(`<div>End: ${renderTime(span.end.time)}</div>`)
-    if (span.next != undefined) {
-        $('#popup').append(`<div>After: ${span.label}</div>`)
-    }
-    const doneButton = $(`<div>Done</div>`)
-    $('#popup').append(doneButton)
-    doneButton.click(() => $('#popup').attr('active', 'false'))
 }
 
 function getCalendarColumn(n:number): any {

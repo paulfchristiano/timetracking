@@ -3,9 +3,17 @@
     margin-top: 1em;
 }
 
-.input {
+#trackerdiv .input {
     width: 30em;
     padding: 4px;
+}
+
+body {
+    font-family: "DINPro", "Helvetica Neue", sans-serif;
+}
+
+.clickable {
+    cursor: pointer;
 }
 
 .suggestions {
