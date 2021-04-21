@@ -1,5 +1,5 @@
 import e from 'express'
-import { data } from 'jquery'
+import { Callbacks, data } from 'jquery'
 import { InputBox } from './suggester.js'
 
 interface Entry {
@@ -18,64 +18,268 @@ function exampleEntries(): Entry[] {
     return result
 }
 
-export function load(): void {
+type Label = string
+
+function* enumfrom<T>(xs:T[], i:number, j:number): Generator<[number, T]> {
+    for (let k = i; k < j; k++) yield [k, xs[k]]
+}
+
+function calendarSpan(
+    label:Label,
+    spanStart:Date,
+    spanEnd:Date,
+    start:Date,
+    end:Date,
+    profile:Profile,
+): JQE {
+    function frac(d:Date): number {
+        return (d.getTime() - start.getTime()) / (end.getTime() - start.getTime())
+    }
+    const lengthPercent = 100 * (frac(spanEnd) - frac(spanStart))
+    const topPercent = 100 * frac(spanStart)
+    const color = getColor(label, profile)
+    const style = `top:${topPercent}%; height:${lengthPercent}%; background:${renderColor(color)};`
+    const result = $(`<div class='event' style='${style}'><div class='spantext'>${label}</div></div>`)
+    return result
+}
+
+
+function zoomedPopup(
+    entries:Entry[],
+    startIndex:number,
+    endIndex:number,
+    profile:Profile,
+    popup: (start:number, end:number) => void,
+    callback:(t:TimeUpdate) => void
+): void {
+    const start:Entry = entries[startIndex]
+    const end:Entry = entries[endIndex]
+    $('#popup').attr('active', 'true')
+    $('#minical').empty()
+    $('#priorcal').empty()
+    $('#nextcal').empty()
+    for (const [a, b] of listPairsAndEnds(enumfrom(entries, startIndex, endIndex+1))) {
+        if (a == null && startIndex > 0) {
+            const label = labelFrom(entries[startIndex-1], entries[startIndex])
+            const style = `background:${renderGradient(getColor(label, profile), true)}; height:100%`
+            const e = $(`<div class='event' style='${style}'><div class='spantext'></div></div>`)
+            e.click(() => popup(startIndex-1, startIndex))
+            $('#priorcal').append(e)
+        }
+        if (b == null && endIndex + 1 < entries.length) {
+            const label = labelFrom(entries[endIndex], entries[endIndex+1])
+            const style = `background:${renderGradient(getColor(label, profile), false)}; height:100%`
+            const e = $(`<div class='event' style='${style}'><div class='spantext'></div></div>`)
+            e.click(() => popup(endIndex, endIndex+1))
+            $('#nextcal').append(e)
+        }
+        if (a!= null && b!=null) {
+            const [i, first] = a
+            const [j, second] = b
+            const elem = calendarSpan(
+                labelFrom(first, second),
+                first.time, second.time,
+                start.time, end.time,
+                profile
+            )
+            elem.click(() => popup(i, j))
+            $('#minical').append(elem)
+        }
+    }
+    const input = new InputBox(getNames(entries), $('.inputwrapper'), true)
+    input.bind((a, s) => {
+        switch (a.kind) {
+            case 'raw':
+                callback({kind: 'relabel', label: s, before: entries[endIndex-1], after: entries[endIndex]})
+                break
+            case 'minutes':
+                callback({
+                    kind: 'split',
+                    before: entries[endIndex-1],
+                    after: entries[endIndex],
+                    time: minutesAfter(entries[endIndex-1].time, a.minutes),
+                    labelBefore: s
+                })
+                break
+            default: assertNever(a)
+        }
+    })
+    $('#starttime').empty()
+    $('#starttime').append(inputAfterColon(
+        'Start',
+        renderTime(start.time),
+        s => callback({kind: 'move', time: parseTime(s, start.time), entry: start})
+    ))
+    $('#endtime').empty()
+    $('#endtime').append(inputAfterColon(
+        'End',
+        renderTime(end.time),
+        s => callback({kind: 'move', time: parseTime(s, end.time), entry: end})
+    ))
+}
+
+function renderDuration(ms:number): string {
+    if (ms < 1000) {
+        return `${ms}ms`
+    }
+    const s = Math.floor(ms / 1000)
+    if (s < 60) {
+        return `${s}s`
+    }
+    const minutes = Math.round(s / 60)
+    if (minutes < 60) {
+        return `${minutes}m`
+    }
+    const h = Math.floor(minutes/60)
+    const m = (minutes % 60)
+    return `${h}h:${twoDigits(m)}m`
+}
+
+function twoDigits(n:number): string {
+    const s = `${n}`
+    if (s.length == 1) {
+        return '0' + s
+    } else {
+        return s
+    }
+}
+
+export function loadTracker(): void {
+    const profile:Profile = emptyProfile()
     let entries:Entry[] = loadEntries()
     sortEntries(entries)
-    const x = new InputBox(getNames(entries), $('#trackerdiv'))
-    function callback(t:TimeUpdate, entriesList:Entry[][]): Entry[][] {
-        entriesList = applyUpdate(t, [entries].concat(entriesList))
-        entries = entriesList[0]
+    function callback(update:TimeUpdate) {
+        [entries, []] = applyUpdate(update, entries, [])
         saveEntries(entries)
         render()
-        return entriesList.slice(1)
     }
+    function startInput(elem:JQE, start:Entry, end:Entry|null): void {
+        $('.inputwrapper').empty()
+        const x = new InputBox(getNames(entries), elem, true)
+        if (end == null) {
+            x.bind((a, s) => {
+                switch (a.kind) {
+                    case 'raw':
+                        callback({kind: 'append', label: (s.length == 0) ? undefined : s, time: new Date()})
+                        break
+                    //TODO: handle weird cases
+                    case 'minutes':
+                        callback({kind: 'append', label: s, time: minutesAfter(start.time, a.minutes)})
+                        break
+                    default: assertNever(a)
+                }
+            })
+        } else {
+            x.bind((a, s) => {
+                switch (a.kind) {
+                    case 'raw':
+                        callback({kind: 'relabel', label: s, before: start, after: end})
+                        break
+                    case 'minutes':
+                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.minutes)})
+                        break
+                    default: assertNever(a)
+                }
+            })
+        }
+    }
+    let heartbeats:[Date, JQE][] = []
+    function setTimer(start:Date, elem:JQE): void {
+        const diff = new Date().getTime() - start.getTime()
+        if (diff > 1000)
+            elem.text(renderDuration(new Date().getTime() - start.getTime()))
+    }
+    setInterval(function() {
+        for (const [start, elem] of heartbeats) {
+            setTimer(start, elem)
+        }
+    }, 1000)
     function render() {
+        heartbeats = []
         const elem = $('#inputs')
-        const options = $('#options')
         elem.html('')
-        options.html('')
-        for (const [j, [end, start]] of enumerate(listPairsAndEnds(revit(entries)))) {
-            const i = entries.length - j - 1
+        for (const [end, start] of listPairsAndEnds(revit(entries))) {
             //end = entries[i]
-            if (end != null) {
+            if (end == null) {
+                const row = $(`<div class='trackertimerow'></div>`)
+                row.append('<div class="nowdot"></div>')
+                row.append($(`<div class='timelabel'></div>`))
+                elem.append(row)
+            } else {
+                /*
                 const e = $(`<span class='clickable'>[${renderTime(end.time)}]</span>`)
-                e.click(() => {
-                    evolvingPopup(entries.slice(i-2, i), callback)
-                })
                 const f = $('<div></div>')
                 f.append(e)
                 elem.append(f)
+                */
+                const row = $(`<div class='trackertimerow'></div>`)
+                row.append('<div class="dot"></div>')
+                row.append($(`<div class='timelabel'>${renderTime(end.time)}</div>`))
+                elem.append(row)
             }
+            //TODO unify these two cases
             if (start != null && end != null) {
-                const e = $(`<span class='clickable'>${labelFrom(start, end)}</span>`)
-                e.click(() => {
-                    evolvingPopup(entries.slice(i-2, i+1), callback)
-                })
-                const f = $('<div></div>')
-                f.append(e)
-                elem.append(f)
+                const label = labelFrom(start, end)
+                const style = `background: ${renderColor(getColor(label, profile))}; float: left`
+                const row = $(`<div class='trackerrow'></div>`)
+                const text = $(`<div class='trackerlabel'></div>`)
+                text.append($(`<div>${label}</div>`))
+                text.append($(`<div>${renderDuration(end.time.getTime() - start.time.getTime())}</div>`))
+                const e = $(`<div class="line" style='${style}''></div>`)
+                row.append(e)
+                row.append(text)
+                const inputBuffer = $(`<div class='inputbuffer'></div>`)
+                const inputWrapper = $(`<div class='inputwrapper'></div>`)
+                inputBuffer.append(inputWrapper)
+                row.append(inputBuffer)
+                text.click(() => startInput(inputWrapper, start, end))
+                elem.append(row)
+            }
+            if (start != null && end == null) {
+                const label = start.after || 'TBD'
+                const style = `background: gray; float: left`
+                const row = $(`<div class='trackerrow'></div>`)
+                const text = $(`<div class='trackerlabel'></div>`)
+                text.append($(`<div>${label}</div>`))
+                const timer = $(`<div id='runningtimer'></div>`)
+                setTimer(start.time, timer)
+                text.append(timer)
+                heartbeats.push([start.time, timer])
+                const e = $(`<div class="line" style='${style}''></div>`)
+                row.append(e)
+                row.append(text)
+                const inputBuffer = $(`<div class='inputbuffer'></div>`)
+                const inputWrapper = $(`<div class='inputwrapper'></div>`)
+                inputBuffer.append(inputWrapper)
+                row.append(inputBuffer)
+                text.click(() => startInput(inputWrapper, start, end))
+                startInput(inputWrapper, start, end)
+                elem.append(row)
+                
             }
         }
     }
     function addEntry(s:string) {
         entries.push({before: s, time: now(), id: newUID()})
         saveEntries(entries)
-        x.setUniverse(getNames(entries))
         render()
     }
     render()
-    x.bind(addEntry)
+}
+
+function emptyProfile(): Profile {
+    return {colors: new Map()}
 }
 
 export function loadChart() {
-    renderChart(loadEntries())
+    renderChart(loadEntries(), emptyProfile())
 }
 
-function renderChart(entries:Entry[]){
+function renderChart(entries:Entry[], profile:Profile){
     const timings:Map<string, number> = getTotalTime(entries, entries[0].time, entries[entries.length - 1].time)
-    const datapoints:{y: number, label: string, color:Color}[] = []
+    const datapoints:{y: number, label: string, color:string}[] = []
     for (const [k, v] of timings) {
-        datapoints.push({label: k, y: v / 3600, color: nameToColor(k)})
+        datapoints.push({label: k, y: v / 3600, color: renderColor(getColor(k, profile))})
     }
     /* tslint:disable-next-line */
     var chart = new CanvasJS.Chart("chartContainer", {
@@ -106,7 +310,7 @@ function length(span:Span): number {
     return secondsBetween(span.start.time, span.end.time)
 }
 
-function renderBars(entries:Entry[], buckets:Bucket[]) {
+function renderBars(entries:Entry[], buckets:Bucket[], profile:Profile) {
     const seconds:Map<string, number>[] = []
     for (const bucket of buckets) {
         const spans = spansInRange(bucket.start, bucket.end, entries)
@@ -123,7 +327,7 @@ function renderBars(entries:Entry[], buckets:Bucket[]) {
         data.push({
             type: "stackedColumn",
             showInLegend: false,
-            color: nameToColor(k),
+            color: getColor(k, profile),
             name: k,
             dataPoints: seconds.map((m, i) => ({
                 y: (m.get(k) || 0) / 3600,
@@ -228,7 +432,7 @@ function renderBars(entries:Entry[], buckets:Bucket[]) {
 export function loadBars() {
     const entries = loadEntries()
     const buckets = weeklyBuckets()
-    renderBars(entries, buckets)
+    renderBars(entries, buckets, emptyProfile())
 }
 
 function weeklyBuckets(): Bucket[] {
@@ -366,6 +570,12 @@ function mid(a:Date, b:Date): Date {
     return new Date((a.getTime() + b.getTime())/2)
 }
 
+function minutesAfter(a:Date, n:number): Date {
+    const result = new Date(a)
+    result.setMinutes(result.getMinutes() + n)
+    return result
+}
+
 function applyToTriples<X, Y>(f:(a:X|undefined, b:X, c:X|undefined) => Y|null, xs:X[]): Y[] {
     let a:X|undefined = undefined
     let b:X|undefined = undefined
@@ -438,53 +648,90 @@ interface CalendarDay {
     index: number,
 }
 
-function partInDay(start:Date, stop:Date, day:CalendarDay): null|{start:Date, stop:Date} {
+function partInDay(start:Date, stop:Date, day:CalendarDay): null|{start:Date, end:Date} {
     if (stop < day.start) return null
     else if (start > day.end) return null
     return {
         start: last(day.start, start),
-        stop: first(day.end, stop)
+        end: first(day.end, stop)
     } 
 }
 
-export function loadCalendar() {
-    let entries = loadEntries()
-    sortEntries(entries)
-    function callback(t:TimeUpdate, entriesList:Entry[][]): Entry[][] {
-        entriesList = applyUpdate(t, [entries].concat(entriesList))
-        entries = entriesList[0]
-        showCalendar(entries, callback)
-        saveEntries(entries)
-        return entriesList.slice(1)
-    }
-    showCalendar(entries, callback)
+type Indices = Array<number|null>
+
+function hidePopup(): void {
+    $('#minical').empty()
+    $('#nextcal').empty()
+    $('#priorcal').empty()
+    $('#popup').attr('active', 'false')
 }
 
-function showCalendar(entries:Entry[], callback: (t:TimeUpdate, o:Entry[][]) => Entry[][]): void {
+export function loadCalendar() {
+    $('#calendardiv').click((e) => {
+        hidePopup()
+    })
+    let entries = loadEntries()
+    sortEntries(entries)
+    function callback(t:TimeUpdate, indices:Indices): [Entry[], Indices] {
+        [entries, indices] = applyUpdate(t, entries, indices)
+        saveEntries(entries)
+        return [entries, indices]
+    }
+    showCalendar(entries, null, emptyProfile(), callback)
+}
+
+function showCalendar(
+    entries:Entry[],
+    initialPopup: [number, number]|null,
+    profile:Profile,
+    callback: (t:TimeUpdate, indices:Indices) => [Entry[], Indices]
+): void {
     const days:CalendarDay[] = []
     for (let i = 0; i < 7; i++) {
         const d = daysAgo(6-i)
         $(`#headerrow th:nth-child(${i+2})`).text(renderDay(d))
         days.push({start: startOfDay(d), end: endOfDay(d), index: i})
     }
+    //Called from within a popup when an edit occurs
+    //(So needs to redraw the popup)
+    function popupCallback(startIndex:number|null, endIndex:number|null) {
+        function f(t:TimeUpdate) {
+            [entries, [startIndex, endIndex]] = callback(t, [startIndex, endIndex])
+            const initialPopup:null|[number, number] = 
+                (startIndex == null || endIndex == null) ? null
+                : [startIndex, endIndex]
+            showCalendar(entries, initialPopup, profile, callback)
+        }
+        return f
+    }
+    function popup(startIndex:number, endIndex:number) {
+        zoomedPopup(
+            entries, startIndex, endIndex,
+            profile,
+            popup,
+            popupCallback(startIndex, endIndex)
+        )
+    }
     for (const [[i, start], [j, end]] of listPairs(enumerate(it(entries)))) {
         for (const day of days) {
             const range = partInDay(start.time, end.time, day)
             if (range !== null) {
-                getCalendarColumn(day.index).append(
-                    calendarSpan(
-                        labelFrom(start, end),
-                        range.start, range.stop, day.start, day.end,
-                        entries, i, callback
-                    )
+                const e = calendarSpan(labelFrom(start, end),
+                    range.start, range.end,
+                    day.start, day.end,
+                    profile
                 )
+                e.click((e) => {
+                    popup(i, j)
+                    e.stopPropagation()
+                })
+                getCalendarColumn(day.index).append(e)
             }
         }
     }
+    if (initialPopup != null) popup(initialPopup[0], initialPopup[1])
 }
 
-
-type Color = string
 
 type View = Map<string, {color?: Color, expand?: View}>
 
@@ -502,6 +749,49 @@ function group(name: string, view:View): string|null {
     return `${start}/${group(rest, v.expand)}`
 }
 
+interface Profile {
+    colors: Map<Label, Color>
+}
+
+//Random integetr between 1 and n-1
+function randInt(n:number): number {
+    return Math.floor(n * Math.random())
+}
+
+function randomColor() {
+    return {
+        r: randInt(256),
+        g: randInt(256),
+        b: randInt(256),
+    }
+}
+
+interface Color {
+    r: number,
+    g: number,
+    b: number,
+}
+
+function getColor(label:Label, profile:Profile): Color {
+    let result = profile.colors.get(label)
+    if (result == undefined) {
+        result = randomColor()
+        profile.colors.set(label, result)
+        return result
+    }
+    return result
+}
+
+function renderColor(color:Color, alpha=1): string {
+    return `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`
+}
+
+function renderGradient(color:Color, transparentTop:boolean): string {
+    const angle = (transparentTop) ? '180deg' : '0deg'
+    return `linear-gradient(${angle}, ${renderColor(color, 0)} 0%, ${renderColor(color, 1)} 100%)`
+}
+
+/*
 function nameToColor(str:string): Color {
     var hash = 0;
     for (var i = 0; i < str.length; i++) {
@@ -514,10 +804,12 @@ function nameToColor(str:string): Color {
     }
     return colour;
 }
+*/
 
 
 type JQE = JQuery<HTMLElement>
 
+/*
 //TODO: callback applies the update and then gives the new list of spans
 function calendarSpan(
     label:string,
@@ -556,6 +848,7 @@ function evolvingPopup(initialEntries:Entry[], callback:(t:TimeUpdate, o:Entry[]
     }
     popup(initialEntries)
 }
+*/
 
 function makeInput(initial:string, callback:(s:string) => void): JQE {
     const elem:JQE = $(`<input></input>`)
@@ -586,61 +879,16 @@ type IDed = {
     id: uid,
 }
 
-type Update<T> = {
-    [P in keyof T]?: ((x:T[P]) => T[P])
-}
-
-type ListUpdate<T extends IDed> = {kind: 'apply', uid:uid, update: (x:T) => T}
-    | {kind: 'split', uid:uid, insert: T[]}
-    | {kind: 'delete', uid:uid}
-    | {kind: 'sequence', updates: ListUpdate<T>[]}
-
-function noop<T extends IDed>(): ListUpdate<T> {
-    return {kind: 'sequence', updates: []}
-}
-
-function apply<T>(update:Update<T>): (x:T) => T {
-    return function(x:T) {
-        const y = ({...x})
-        for (const k in update) {
-            const f = update[k]
-            if (f !== undefined) y[k] = f(x[k])
-        }
-        return y
-    }
-}
-
 function assertNever(value: never): never {
     throw new Error("Shouldn't reach this case!")
 }
 
-function applyList<T extends IDed>(update:ListUpdate<T>): (xs:T[]) => T[] {
-    return function(xs:T[]): T[] {
-        switch (update.kind) {
-            case 'sequence':
-                let result:T[] = xs
-                for (const u of update.updates) {
-                    result = applyList(u)(result)
-                }
-                return result
-            case 'apply':
-                return xs.map(x => (x.id == update.uid) ? update.update(x) : x)
-            case 'split':
-            case 'delete':
-                const n = xs.findIndex(x => x.id == update.uid)
-                if (n < 0) throw new Error("Can't find that UID")
-                const insert = (update.kind == 'split') ? update.insert : []
-                return xs.slice(0, n).concat(insert).concat(xs.slice(n+1, undefined))
-            default:
-                return assertNever(update)
-        }
-    }
-}
-
-type TimeUpdate = {kind: 'relabel', before: Entry, after: Entry, label: string}
-    | {kind: 'split', before: Entry, after: Entry, time: Date}
+type TimeUpdate = {kind: 'relabel', before: Entry, after: Entry, label: Label}
+    | {kind: 'split', before: Entry, after: Entry, time: Date, labelBefore?: Label, labelAfter?:Label}
     | {kind: 'merge', entry: Entry, label: string}
     | {kind: 'move', entry: Entry, time: Date}
+    | {kind: 'composite', updates: TimeUpdate[]}
+    | {kind: 'append', label?: Label, time: Date}
 
 
 function insertAt<T>(toInsert:T, xs:T[], index:number): T[] {
@@ -664,7 +912,11 @@ function insertBetween<T extends IDed>(x:T, xs:T[], a:T, b:T):T[] {
     return xs
 }
 
-function neighbors<T extends IDed>(x:T, xs:T[]): [T|null, T|null] {
+function removeIndex<T>(xs:T[], n:number): T[] {
+    return xs.slice(0, n).concat(xs.slice(n+1))
+}
+
+function neighbors<T extends IDed>(xs:T[], x:T): [T|null, T|null] {
     for (let i = 0; i < xs.length; i++) {
         if (xs[i].id == x.id) {
             return [
@@ -676,9 +928,90 @@ function neighbors<T extends IDed>(x:T, xs:T[]): [T|null, T|null] {
     return [null, null]
 }
 
+function find<T extends IDed>(xs:T[], x:T) {
+    for (let i = 0; i < xs.length; i++) {
+        if (xs[i].id == x.id) return i
+    }
+    return null
+}
+
+
 //TODO: I think I want this to be the only place that mutates a span or entry?
 //TODO: I want to somehow block the user from moving time past another entry
 //(But at any rate I'll need to figure out how to resolve such conflicts in the DB...)
+function applyUpdate(
+    update:TimeUpdate,
+    entries:Entry[],
+    indices:Indices,
+): [Entry[], Indices] {
+    switch (update.kind) {
+        case 'composite':
+            for (const u of update.updates) {
+                [entries, indices] = applyUpdate(u, entries, indices)
+            }
+            break
+        case 'relabel':
+            entries = applyTo(
+                entry => ({...entry, after: update.label}),
+                entries,
+                update.before
+            )
+            entries = applyTo(
+                entry => ({...entry, before: update.label}),
+                entries,
+                update.after
+            )
+            break
+        case 'split': 
+            const newEntry:Entry = {
+                time: update.time,
+                before: update.labelBefore || update.before.after || update.after.before,
+                after: update.labelAfter || update.after.before || update.before.after,
+                id: newUID()
+            }
+            const index = find(entries, update.before)
+            if (index != null) {
+                entries = insertAt(newEntry, entries, index+1)
+                indices = indices.map(x => (x == null) ? null : (x > index) ? x+1 : x)
+            }
+            if (update.labelBefore !== undefined) {
+                entries = applyTo(entry => ({...entry, after: update.labelBefore}), entries, update.before)
+            } if (update.labelAfter !== undefined) {
+                entries = applyTo(entry => ({...entry, before: update.labelAfter}), entries, update.after)
+            }
+            break
+        case 'merge': {
+            const [a, b] = neighbors(entries, update.entry)
+            if (a != null) a.after = update.label
+            if (b != null) b.before = update.label
+            const index = find(entries, update.entry)
+            if (index != null) {
+                entries = removeIndex(entries, index)
+                indices = indices.map(x => (x == null || x == index) ? null : (x > index) ? x - 1 : x)
+            }
+            break
+        }
+        case 'move':
+            entries = applyTo(
+                entry => ({...entry, time: update.time}),
+                entries,
+                update.entry
+            )
+            break
+        case 'append': {
+            const newEntry:Entry = {
+                time: update.time,
+                before: update.label,
+                id: newUID()
+            }
+            entries = entries.concat([newEntry])
+            break
+        }
+        default: assertNever(update)
+    }
+    return [entries, indices]
+}
+/*
 function applyUpdate(
     update:TimeUpdate,
     entriesList:Entry[][],
@@ -724,6 +1057,7 @@ function applyUpdate(
         default: assertNever(update)
     }
 }
+*/
 
 function* listPairsAndEnds<T>(xs:Generator<T>): Generator<[T|null, T|null]> {
     let a:T|null = null;
@@ -751,10 +1085,14 @@ function* enumerate<T>(xs:Generator<T>): Generator<[number, T]> {
 }
 
 function* it<T>(xs:T[]): Generator<T> {
-    for (const x of xs) yield x
+    for (let i = 0; i<xs.length; i++) {
+        yield xs[i]
+    }
 }
 function* revit<T>(xs:T[]): Generator<T> {
-    for (let i = xs.length-1; i--; i>=0) yield xs[i]
+    for (let i = xs.length-1; i>=0; i--) {
+        yield xs[i]
+    }
 }
 
 //Returns the same set of elements, but with booleans flagging first and last

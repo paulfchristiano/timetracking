@@ -5,6 +5,7 @@
     <script type="text/javascript" src="canvasjs.min.js"></script>
     <link rel="stylesheet" type="text/css" href="calendar.css"/>
     <link rel="stylesheet" type="text/css" href="popup.css"/>
+    <link rel="stylesheet" type="text/css" href="suggester.css"/>
     <script type="module">
         import {loadCalendar} from '/track.js'
         loadCalendar()
@@ -14,7 +15,18 @@
 
 <body>
 
-    <div class="popup" id='popup'>Hello!</div>
+    <div class="popup" id='popup'>
+      <div id='popupleft'>
+        <div id='priorcal'></div>
+        <div id='minical'></div>
+        <div id='nextcal'></div>
+      </div>
+      <div id='popupright'>
+        <div id='starttime'></div>
+        <div id='popupinput'><div class='inputwrapper'></div></div>
+        <div id='endtime'></div>
+      </div>
+    </div>
     <div id='calendardiv'>
         <table class="offset">
           <thead>

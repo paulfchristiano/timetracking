@@ -1,3 +1,30 @@
+var __read = (this && this.__read) || function (o, n) {
+    var m = typeof Symbol === "function" && o[Symbol.iterator];
+    if (!m) return o;
+    var i = m.call(o), r, ar = [], e;
+    try {
+        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+    }
+    catch (error) { e = { error: error }; }
+    finally {
+        try {
+            if (r && !r.done && (m = i["return"])) m.call(i);
+        }
+        finally { if (e) throw e.error; }
+    }
+    return ar;
+};
+var __values = (this && this.__values) || function(o) {
+    var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+    if (m) return m.call(o);
+    if (o && typeof o.length === "number") return {
+        next: function () {
+            if (o && i >= o.length) o = void 0;
+            return { value: o && o[i++], done: !o };
+        }
+    };
+    throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+};
 import { Matcher } from './matcher.js';
 var InputBox = /** @class */ (function () {
     function InputBox(universe, elem, autofocus) {
@@ -9,14 +36,17 @@ var InputBox = /** @class */ (function () {
         this.selected = null;
         this.submit = function () { };
         this.matcher = new Matcher(universe);
+        elem.empty();
         this.inputElement = makeElement('input', ['input']);
-        if (autofocus)
-            this.inputElement.attr('autofocus', '');
         elem.append(this.inputElement);
         this.inputElement.keydown(function (e) { return _this.keydown(e); });
         this.inputElement.keyup(function (e) { return _this.keyup(e); });
         this.suggestionElement = makeElement('div', ['suggestions']);
         elem.append(this.suggestionElement);
+        if (autofocus) {
+            this.inputElement.focus();
+            this.inputElement.prop('autofocus', true);
+        }
     }
     InputBox.prototype.bind = function (f) {
         this.submit = f;
@@ -39,7 +69,8 @@ var InputBox = /** @class */ (function () {
     InputBox.prototype.keydown = function (e) {
         switch (e.keyCode) {
             case 13:
-                this.submit(this.getText());
+                var m = match(this.getText());
+                this.submit(m.action, m.suffix);
                 this.reset();
                 e.preventDefault();
                 break;
@@ -69,7 +100,6 @@ var InputBox = /** @class */ (function () {
     };
     InputBox.prototype.render = function () {
         this.suggestionElement.html('');
-        console.log(this.selected);
         for (var i = 0; i < this.suggestions.length; i++) {
             var suggestion = this.suggestions[i];
             this.suggestionElement.append(suggestionDiv(suggestion, i == this.selected));
@@ -106,12 +136,97 @@ var InputBox = /** @class */ (function () {
     // Should be able to call it constantly, doesn't change state
     InputBox.prototype.refresh = function () {
         var s = this.getText();
-        this.suggestions = (s.length == 0) ? [] : this.matcher.match(s);
+        var _a = __read(splitPrefix(s), 2), prefix = _a[0], suffix = _a[1];
+        this.suggestions = (suffix.length == 0) ? [] : this.matcher.match(suffix).map(function (x) { return (prefix.length == 0) ? x : prefix + " " + x; });
         this.render();
     };
     return InputBox;
 }());
 export { InputBox };
+function matchToken(s, t) {
+    switch (t.kind) {
+        case 'fixed':
+            if (s == t.s)
+                return 'full';
+            if (s.length < t.s.length && s == t.s.slice(0, s.length))
+                return 'partial';
+            return 'none';
+        case 'number':
+            var n = parseInt(s);
+            if (isNaN(n))
+                return 'none';
+            return 'full';
+        case 'time':
+            var parts = s.split(':');
+            if (parts.some(function (p) { return parseInt(p) == parseInt('nan'); }) || parts.length > 2)
+                return 'none';
+            if (parts.length == 2)
+                return 'full';
+            return 'partial';
+        default: return assertNever(t);
+    }
+}
+function matchTokens(xs, ts) {
+    for (var i = 0; i < ts.length; i++) {
+        if (i >= xs.length)
+            return 'partial';
+        var m = matchToken(xs[i], ts[i]);
+        switch (m) {
+            case 'full':
+                break;
+            case 'partial':
+                if (i == xs.length - 1)
+                    return 'partial';
+                else
+                    return 'none';
+            case 'none':
+                return 'none';
+            default: return assertNever(m);
+        }
+    }
+    return 'full';
+}
+var rules = [
+    { pattern: [{ kind: 'number' }], action: function (xs) { return ({ kind: 'minutes', minutes: parseInt(xs[0]) }); } },
+];
+//Remove the part at the beginning that is a keyword
+function splitPrefix(s) {
+    var m = match(s);
+    if (m.partial)
+        return [s, ''];
+    return [m.prefix, m.suffix];
+}
+function match(s) {
+    var e_1, _a;
+    var xs = s.split(' ');
+    var partial = false;
+    try {
+        for (var rules_1 = __values(rules), rules_1_1 = rules_1.next(); !rules_1_1.done; rules_1_1 = rules_1.next()) {
+            var rule = rules_1_1.value;
+            var m = matchTokens(xs, rule.pattern);
+            switch (m) {
+                case 'full':
+                    var prefix = xs.slice(0, rule.pattern.length);
+                    var suffix = xs.slice(rule.pattern.length);
+                    return { action: rule.action(prefix), partial: false, prefix: prefix.join(''), suffix: suffix.join('') };
+                case 'partial':
+                    partial = true;
+                    break;
+                case 'none':
+                    break;
+                default: assertNever(m);
+            }
+        }
+    }
+    catch (e_1_1) { e_1 = { error: e_1_1 }; }
+    finally {
+        try {
+            if (rules_1_1 && !rules_1_1.done && (_a = rules_1.return)) _a.call(rules_1);
+        }
+        finally { if (e_1) throw e_1.error; }
+    }
+    return { action: { kind: 'raw' }, prefix: '', suffix: s, partial: partial };
+}
 function suggestionDiv(suggestion, focused) {
     if (focused === void 0) { focused = false; }
     var classes = ['suggestion'];

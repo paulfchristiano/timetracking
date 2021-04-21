@@ -16,28 +16,66 @@ body {
     cursor: pointer;
 }
 
-.suggestions {
-    position: absolute;
-    border: 1px solid #d4d4d4;
-    border-bottom: none;
-    border-top: none;
-    z-index: 99;
-    /*position the autocomplete items to be the same width as the container:*/
-    top: 100%;
-    left: 0;
-    right: 0;
-} 
-
-.suggestion {
-    padding: 10px;
-    cursor: pointer;
-    background-color: #fff; 
-    border-bottom: 1px solid #d4d4d4; 
+.inputs{
+    margin-left:40px;
+    margin-top:6px;
+}
+    
+.trackertimerow {
+    display: flex;
+    width: 20em;
+    position: relative;
+    height: 0.8em;
+    margin-top: 0.2em;
+    margin-bottom: 0.2em;
 }
 
-.suggestion.focused {
-    background-color: DodgerBlue;
-    color: #ffffff; 
+.timelabel {
+    margin-left: 0.5em;
+    top: -0.25em;
+    font-weight: bold;
+    position: relative;
+    margin-bottom: 0;
+}
+    
+.dot{
+    width:14px;
+    height:14px;
+background:black;
+    border-radius:7px;
+}
+
+.nowdot {
+    width: 8px;
+    height: 8;
+    border-radius: 2px;
+    border-width: 2px;
+    margin: 1px;
+    background: white;
+    border-style: solid;
+    border-color: gray;
+}
+    
+.line{
+    height:5em;
+    width:4px;
+    margin-left:5.3px;
+}
+
+.trackerrow {
+    width: 20em;
+    display: flex;
+}
+
+.trackerlabel {
+    margin: auto;
+    margin-left: 3em;
+    cursor: pointer;
+}
+
+.inputbuffer {
+    margin-top: auto;
+    margin-bottom: auto;
 }
 
 #trackerdiv {
