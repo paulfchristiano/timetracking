@@ -144,13 +144,7 @@ var InputBox = /** @class */ (function () {
 }());
 export { InputBox };
 function matchToken(s, t) {
-    switch (t.kind) {
-        case 'fixed':
-            if (s == t.s)
-                return 'full';
-            if (s.length < t.s.length && s == t.s.slice(0, s.length))
-                return 'partial';
-            return 'none';
+    switch (t) {
         case 'number':
             var n = parseInt(s);
             if (isNaN(n))
@@ -163,7 +157,12 @@ function matchToken(s, t) {
             if (parts.length == 2)
                 return 'full';
             return 'partial';
-        default: return assertNever(t);
+        default:
+            if (s == t[0])
+                return 'full';
+            if (s.length < t[0].length && s == t[0].slice(0, s.length))
+                return 'partial';
+            return 'none';
     }
 }
 function matchTokens(xs, ts) {
@@ -187,7 +186,12 @@ function matchTokens(xs, ts) {
     return 'full';
 }
 var rules = [
-    { pattern: [{ kind: 'number' }], action: function (xs) { return ({ kind: 'minutes', minutes: parseInt(xs[0]) }); } },
+    { pattern: ['number'], action: function (xs) { return ({ kind: 'number', number: parseInt(xs[0]) }); } },
+    { pattern: [['now']], action: function () { return ({ kind: 'now' }); } },
+    { pattern: [['first'], 'number'], action: function (xs) { return ({ kind: 'first', minutes: parseInt(xs[1]) }); } },
+    { pattern: [['last'], 'number'], action: function (xs) { return ({ kind: 'last', minutes: parseInt(xs[1]) }); } },
+    { pattern: [['until'], 'time'], action: function (xs) { return ({ kind: 'until', time: xs[1] }); } },
+    { pattern: [['after'], 'time'], action: function (xs) { return ({ kind: 'after', time: xs[1] }); } }
 ];
 //Remove the part at the beginning that is a keyword
 function splitPrefix(s) {
@@ -198,6 +202,7 @@ function splitPrefix(s) {
 }
 function match(s) {
     var e_1, _a;
+    debugger;
     var xs = s.split(' ');
     var partial = false;
     try {
@@ -208,7 +213,7 @@ function match(s) {
                 case 'full':
                     var prefix = xs.slice(0, rule.pattern.length);
                     var suffix = xs.slice(rule.pattern.length);
-                    return { action: rule.action(prefix), partial: false, prefix: prefix.join(''), suffix: suffix.join('') };
+                    return { action: rule.action(prefix), partial: false, prefix: prefix.join(' '), suffix: suffix.join(' ') };
                 case 'partial':
                     partial = true;
                     break;

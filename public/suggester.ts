@@ -135,14 +135,10 @@ export class InputBox {
     }
 }
 
-type Token = {kind: 'fixed', s:string} | {kind:'number'} | {kind:'time'}
+type Token = 'number' | 'time' | [string]
 
 function matchToken(s:string, t:Token): 'full' | 'partial' | 'none' {
-    switch (t.kind) {
-        case 'fixed':
-            if (s == t.s) return 'full'
-            if (s.length < t.s.length && s == t.s.slice(0, s.length)) return 'partial'
-            return 'none'
+    switch (t) {
         case 'number':
             const n = parseInt(s)
             if (isNaN(n)) return 'none'
@@ -152,7 +148,10 @@ function matchToken(s:string, t:Token): 'full' | 'partial' | 'none' {
             if (parts.some(p => parseInt(p) == parseInt('nan')) || parts.length > 2) return 'none'
             if (parts.length == 2) return 'full'
             return 'partial'
-        default: return assertNever(t)
+        default:
+            if (s == t[0]) return 'full'
+            if (s.length < t[0].length && s == t[0].slice(0, s.length)) return 'partial'
+            return 'none'
     }
 }
 
@@ -178,14 +177,12 @@ function matchTokens(
 }
 
 type Action = {kind: 'raw'} 
-    | {kind: 'minutes', minutes: number} /*
-    | {kind: 'untilTime', time: Date}
-    | {kind: 'untilMinutes', minutes: number}
-    | {kind: 'since', time: Date}
-    | {kind: 'span', from: Date, to: Date}
     | {kind: 'first', minutes: number}
+    | {kind: 'number', number: number}
+    | {kind: 'now'}
     | {kind: 'last', minutes: number}
-    | {kind: 'next', minutes: number} */
+    | {kind: 'until', time: string}
+    | {kind: 'after', time: string}
 
 interface Rule {
     pattern: Token[],
@@ -193,10 +190,13 @@ interface Rule {
 }
 
 const rules:Rule[] = [
-    {pattern: [{kind: 'number'}], action: xs => ({kind: 'minutes', minutes: parseInt(xs[0])})},
-    /*
-    {pattern: [{kind: 'fixed', string: 'until'}}]}
-    */
+    {pattern: ['number'], action: xs => ({kind: 'number', number: parseInt(xs[0])})},
+    {pattern: [['now']], action: () => ({kind: 'now'})},
+    {pattern: [['first'], 'number'], action: xs => ({kind: 'first', minutes: parseInt(xs[1])})},
+    {pattern: [['last'], 'number'], action: xs => ({kind: 'last', minutes: parseInt(xs[1])})},
+    {pattern: [['until'], 'time'], action: xs => ({kind: 'until', time: xs[1]})},
+    {pattern: [['after'], 'time'], action: xs => ({kind: 'after', time: xs[1]})}
+
 ]
 
 interface MatchResult {
@@ -214,6 +214,7 @@ function splitPrefix(s:string): [string, string] {
 }
 
 function match(s:string): MatchResult {
+    debugger;
     const xs = s.split(' ')
     let partial = false
     for (const rule of rules) {
@@ -222,7 +223,7 @@ function match(s:string): MatchResult {
             case 'full':
                 const prefix = xs.slice(0, rule.pattern.length)
                 const suffix = xs.slice(rule.pattern.length)
-                return {action: rule.action(prefix), partial: false, prefix: prefix.join(''), suffix: suffix.join('')}
+                return {action: rule.action(prefix), partial: false, prefix: prefix.join(' '), suffix: suffix.join(' ')}
             case 'partial':
                 partial = true
                 break

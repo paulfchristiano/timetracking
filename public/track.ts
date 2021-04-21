@@ -92,14 +92,52 @@ function zoomedPopup(
             case 'raw':
                 callback({kind: 'relabel', label: s, before: entries[endIndex-1], after: entries[endIndex]})
                 break
-            case 'minutes':
+            case 'number':
                 callback({
                     kind: 'split',
                     before: entries[endIndex-1],
                     after: entries[endIndex],
-                    time: minutesAfter(entries[endIndex-1].time, a.minutes),
+                    time: minutesAfter(entries[endIndex-1].time, a.number),
                     labelBefore: s
                 })
+                break
+            case 'last':
+                callback({
+                    kind: 'split',
+                    before: entries[endIndex-1],
+                    after: entries[endIndex],
+                    time: minutesAfter(entries[endIndex].time, -a.minutes),
+                    labelAfter: s
+                })
+                break
+            case 'first':
+                callback({
+                    kind: 'split',
+                    before: entries[startIndex],
+                    after: entries[startIndex+1],
+                    time: minutesAfter(entries[startIndex].time, a.minutes),
+                    labelBefore: s
+                })
+                break
+            case 'until':
+                callback({
+                    kind: 'split',
+                    before: entries[startIndex],
+                    after: entries[startIndex+1],
+                    time: parseTime(a.time, entries[startIndex].time),
+                    labelBefore: s
+                })
+                break
+            case 'after':
+                callback({
+                    kind: 'split',
+                    before: entries[startIndex],
+                    after: entries[startIndex+1],
+                    time: parseTime(a.time, entries[startIndex].time),
+                    labelAfter: s
+                })
+                break
+            case 'now':
                 break
             default: assertNever(a)
         }
@@ -160,11 +198,29 @@ export function loadTracker(): void {
             x.bind((a, s) => {
                 switch (a.kind) {
                     case 'raw':
-                        callback({kind: 'append', label: (s.length == 0) ? undefined : s, time: new Date()})
+                        callback({kind: 'append', before: (s.length == 0) ? undefined : s, time: new Date()})
                         break
                     //TODO: handle weird cases
-                    case 'minutes':
-                        callback({kind: 'append', label: s, time: minutesAfter(start.time, a.minutes)})
+                    case 'first':
+                        callback({kind: 'append', before: s, time: minutesAfter(start.time, a.minutes)})
+                        break
+                    case 'last':
+                        callback({kind: 'composite', updates: [
+                            {kind: 'append', time: minutesAfter(new Date(), -a.minutes), after:s},
+                            {kind: 'append', time:new Date(), before:s}
+                        ]})
+                        break
+                    case 'number':
+                        callback({kind: 'append', before: s, time: minutesAfter(start.time, a.number)})
+                        break
+                    case 'now':
+                        callback({kind: 'relabel', label: s, before:start})
+                        break
+                    case 'until':
+                        callback({kind: 'append', before: s, time: parseTime(a.time, new Date())})
+                        break
+                    case 'after':
+                        callback({kind: 'append', after: s, time: parseTime(a.time, new Date())})
                         break
                     default: assertNever(a)
                 }
@@ -175,8 +231,22 @@ export function loadTracker(): void {
                     case 'raw':
                         callback({kind: 'relabel', label: s, before: start, after: end})
                         break
-                    case 'minutes':
+                    case 'first':
                         callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.minutes)})
+                        break
+                    case 'now':
+                        break
+                    case 'number':
+                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.number)})
+                        break
+                    case 'last':
+                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
+                        break
+                    case 'until':
+                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: parseTime(a.time, start.time)})
+                        break
+                    case 'after':
+                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: parseTime(a.time, start.time)})
                         break
                     default: assertNever(a)
                 }
@@ -883,12 +953,12 @@ function assertNever(value: never): never {
     throw new Error("Shouldn't reach this case!")
 }
 
-type TimeUpdate = {kind: 'relabel', before: Entry, after: Entry, label: Label}
+type TimeUpdate = {kind: 'relabel', before?: Entry, after?: Entry, label: Label}
     | {kind: 'split', before: Entry, after: Entry, time: Date, labelBefore?: Label, labelAfter?:Label}
     | {kind: 'merge', entry: Entry, label: string}
     | {kind: 'move', entry: Entry, time: Date}
     | {kind: 'composite', updates: TimeUpdate[]}
-    | {kind: 'append', label?: Label, time: Date}
+    | {kind: 'append', before?: Label, after?:Label, time: Date}
 
 
 function insertAt<T>(toInsert:T, xs:T[], index:number): T[] {
@@ -951,16 +1021,20 @@ function applyUpdate(
             }
             break
         case 'relabel':
-            entries = applyTo(
-                entry => ({...entry, after: update.label}),
-                entries,
-                update.before
-            )
-            entries = applyTo(
-                entry => ({...entry, before: update.label}),
-                entries,
-                update.after
-            )
+            if (update.before !== undefined) {
+                entries = applyTo(
+                    entry => ({...entry, after: update.label}),
+                    entries,
+                    update.before
+                )
+            }
+            if (update.after !== undefined) {
+                entries = applyTo(
+                    entry => ({...entry, before: update.label}),
+                    entries,
+                    update.after
+                )
+            }
             break
         case 'split': 
             const newEntry:Entry = {
@@ -1001,7 +1075,8 @@ function applyUpdate(
         case 'append': {
             const newEntry:Entry = {
                 time: update.time,
-                before: update.label,
+                before: update.before,
+                after: update.after,
                 id: newUID()
             }
             entries = entries.concat([newEntry])
