@@ -3,13 +3,20 @@
     margin-top: 1em;
 }
 
-#trackerdiv .input {
-    width: 30em;
-    padding: 4px;
+.trackerrow .input {
+    width: 20em;
 }
 
 body {
     font-family: "DINPro", "Helvetica Neue", sans-serif;
+}
+
+.categorylabel {
+    color: grey;
+}
+
+.errorlabel {
+    color: red;
 }
 
 .clickable {
@@ -63,7 +70,7 @@ background:black;
 }
 
 .trackerrow {
-    width: 20em;
+    width: 30em;
     display: flex;
 }
 
@@ -81,12 +88,4 @@ background:black;
 #trackerdiv {
     position: relative;
     display: inline-block;
-}
-
-.upbutton {
-    position: absolute;
-    left: -0.8em;
-    font-size: 0.7em;
-    top: -0.2em;
-    color: grey;
 }

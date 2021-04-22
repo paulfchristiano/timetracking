@@ -86,7 +86,7 @@ function zoomedPopup(
             $('#minical').append(elem)
         }
     }
-    const input = new InputBox(getNames(entries), $('.inputwrapper'), true)
+    const input = new InputBox(getNames(entries), $('.inputwrapper'))
     input.bind((a, s) => {
         switch (a.kind) {
             case 'raw':
@@ -128,6 +128,15 @@ function zoomedPopup(
                     labelBefore: s
                 })
                 break
+            case 'untilMinutes':
+                callback({
+                    kind: 'split',
+                    before: entries[endIndex-1],
+                    after: entries[endIndex],
+                    time: minutesAfter(entries[endIndex].time, -a.minutes),
+                    labelBefore: s
+                })
+                break
             case 'after':
                 callback({
                     kind: 'split',
@@ -142,6 +151,7 @@ function zoomedPopup(
             default: assertNever(a)
         }
     })
+    input.focus()
     $('#starttime').empty()
     $('#starttime').append(inputAfterColon(
         'Start',
@@ -186,6 +196,7 @@ export function loadTracker(): void {
     const profile:Profile = emptyProfile()
     let entries:Entry[] = loadEntries()
     sortEntries(entries)
+    let focused:Entry|null = null;
     function callback(update:TimeUpdate) {
         [entries, []] = applyUpdate(update, entries, [])
         saveEntries(entries)
@@ -193,7 +204,8 @@ export function loadTracker(): void {
     }
     function startInput(elem:JQE, start:Entry, end:Entry|null): void {
         $('.inputwrapper').empty()
-        const x = new InputBox(getNames(entries), elem, true)
+        const x = new InputBox(getNames(entries), elem)
+        x.focus()
         if (end == null) {
             x.bind((a, s) => {
                 switch (a.kind) {
@@ -219,6 +231,9 @@ export function loadTracker(): void {
                     case 'until':
                         callback({kind: 'append', before: s, time: parseTime(a.time, new Date())})
                         break
+                    case 'untilMinutes':
+                        callback({kind: 'append', before: s, time: minutesAfter(new Date(), -a.minutes)})
+                        break    
                     case 'after':
                         callback({kind: 'append', after: s, time: parseTime(a.time, new Date())})
                         break
@@ -244,6 +259,9 @@ export function loadTracker(): void {
                         break
                     case 'until':
                         callback({kind: 'split', labelBefore: s, before: start, after: end, time: parseTime(a.time, start.time)})
+                        break
+                    case 'untilMinutes':
+                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
                         break
                     case 'after':
                         callback({kind: 'split', labelAfter: s, before: start, after: end, time: parseTime(a.time, start.time)})
@@ -293,7 +311,7 @@ export function loadTracker(): void {
                 const style = `background: ${renderColor(getColor(label, profile))}; float: left`
                 const row = $(`<div class='trackerrow'></div>`)
                 const text = $(`<div class='trackerlabel'></div>`)
-                text.append($(`<div>${label}</div>`))
+                text.append($(`<div>${renderLabel(label)}</div>`))
                 text.append($(`<div>${renderDuration(end.time.getTime() - start.time.getTime())}</div>`))
                 const e = $(`<div class="line" style='${style}''></div>`)
                 row.append(e)
@@ -302,15 +320,19 @@ export function loadTracker(): void {
                 const inputWrapper = $(`<div class='inputwrapper'></div>`)
                 inputBuffer.append(inputWrapper)
                 row.append(inputBuffer)
-                text.click(() => startInput(inputWrapper, start, end))
+                text.click(() => {
+                    startInput(inputWrapper, start, end)
+                    focused = end;
+                })
                 elem.append(row)
+                if (focused == end) startInput(inputWrapper, start, end)
             }
             if (start != null && end == null) {
                 const label = start.after || 'TBD'
                 const style = `background: gray; float: left`
                 const row = $(`<div class='trackerrow'></div>`)
                 const text = $(`<div class='trackerlabel'></div>`)
-                text.append($(`<div>${label}</div>`))
+                text.append($(`<div>${renderLabel(label)}</div>`))
                 const timer = $(`<div id='runningtimer'></div>`)
                 setTimer(start.time, timer)
                 text.append(timer)
@@ -322,10 +344,12 @@ export function loadTracker(): void {
                 const inputWrapper = $(`<div class='inputwrapper'></div>`)
                 inputBuffer.append(inputWrapper)
                 row.append(inputBuffer)
-                text.click(() => startInput(inputWrapper, start, end))
-                startInput(inputWrapper, start, end)
+                text.click(() => {
+                    startInput(inputWrapper, start, end)
+                    focused = end;
+                })
                 elem.append(row)
-                
+                if (focused == null) startInput(inputWrapper, start, end)
             }
         }
     }
@@ -551,11 +575,34 @@ function daysAgo(n:number): Date {
     return result
 }
 
+function renderLabel(label:Label): string {
+    if (label.length > 0 && label[0] == '?') {
+        return `<span class='errorlabel'>${label}</span>`
+    }
+    const parts = label.split('/')
+    if (parts.length == 1) return label
+    const prefix = parts.slice(0, parts.length-1).join('/')
+    const suffix = parts[parts.length-1]
+    return `${suffix} <span class='categorylabel'>(${prefix})</span>` 
+}
+
+function* namesFrom(label:Label|undefined): Generator<Label> {
+    if (label === undefined) return
+    const parts = label.split('/')
+    for (let i = 0; i < parts.length; i++) {
+        yield parts.slice(0,i+1).join('/')
+    }
+}
+
 function getNames(entries:Entry[]): string[] {
     const s:Set<string> = new Set()
     for (const entry of entries) {
-        if (entry.before !== undefined) s.add(entry.before)
-        if (entry.after !== undefined) s.add(entry.after)
+        for (const name of namesFrom(entry.before)) {
+            s.add(name)
+        }
+        for (const name of namesFrom(entry.after)) {
+            s.add(name)
+        }
     }
     return Array.from(s.keys())
 }
@@ -568,19 +615,70 @@ function now(): Date {
     return new Date()
 }
 
-function renderTime(d:Date): string {
-    return d.toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', hour12: false })
+interface MyDate {
+    year: number,
+    month: string,
+    day: number,
+    ampm: 'am' | 'pm',
+    hour: number,
+    minute: number
 }
-//TODO: takes as input a date and a string
-//parses the string as the nearest reasonable date
-function parseTime(s:string, d:Date): Date {
-    const result = new Date(d)
-    const parts = s.split(':').map(s => parseInt(s.trim()))
-    if (parts.length == 2 && parts.filter(x => x == parseInt('!'))) {
-        result.setHours(parts[0])
-        result.setMinutes(parts[1])
+
+function convertDate(d:Date): MyDate {
+    return {
+        year: d.getFullYear(),
+        month: d.toLocaleString('default', {month: 'short'}),
+        day: d.getDate(),
+        hour: (d.getHours() - 1) % 12 + 1,
+        ampm: d.getHours() < 12 ? 'am' : 'pm',
+        minute: (d.getMinutes())
     }
-    return result
+}
+
+function renderTime(date:Date): string {
+    const now = convertDate(new Date())
+    const myDate = convertDate(date)
+    function renderTime(d:MyDate) {
+        return `${d.hour}:${twoDigits(d.minute)}`
+    }
+    function renderAMPM(d:MyDate) {
+        return `${renderTime(d)} ${(d.ampm == 'am') ? 'AM' : 'PM'}`
+    }
+    function renderDay(d:MyDate) {
+        return `${renderAMPM(d)}, ${d.month} ${d.day}`
+    }
+    function renderYear(d:MyDate) {
+        return `${renderDay(d)}, ${d.year}`
+    }
+    if (now.year != myDate.year) return renderYear(myDate)
+    else if (now.month != myDate.month || now.day != myDate.day) return renderDay(myDate)
+    else if (now.ampm != myDate.ampm || myDate.hour == 12) return renderAMPM(myDate)
+    else return renderTime(myDate)
+}
+
+//TODO: takes as input a date and a string
+//fills in the date and AM/PM to get the closest thing in time
+function parseTime(s:string, d:Date): Date {
+    const parts = s.split(':').map(s => parseInt(s.trim()))
+    if (parts.length == 2 && !parts.some(isNaN)) {
+        const candidate = new Date(d)
+        candidate.setMinutes(parts[1])
+        let best:Date = d; //never used
+        let bestDiff:number|null = null;
+        for (const dayDelta of [-1, 0, 1]) {
+            for (const hours of [parts[0], (parts[0]+12)%24]) {
+                candidate.setDate(d.getDate() + dayDelta)
+                candidate.setHours(hours)
+                const diff = Math.abs(candidate.getTime() - d.getTime())
+                if (bestDiff == null || diff < bestDiff) {
+                    best = new Date(candidate)
+                    bestDiff = diff
+                }
+            }
+        }
+        return best
+    }
+    return new Date(d)
 }
 
 function saveEntries(entries:Entry[]) {
@@ -781,6 +879,9 @@ function showCalendar(
             popup,
             popupCallback(startIndex, endIndex)
         )
+    }
+    for (const day of days) {
+        getCalendarColumn(day.index).empty()
     }
     for (const [[i, start], [j, end]] of listPairs(enumerate(it(entries)))) {
         for (const day of days) {

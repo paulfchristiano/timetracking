@@ -12,7 +12,6 @@ export class InputBox {
     constructor (
         private universe:string[],
         public readonly elem:JQE,
-        autofocus:boolean = true
     ) {
 
         this.matcher = new Matcher(universe)
@@ -26,14 +25,14 @@ export class InputBox {
 
         this.suggestionElement = makeElement('div', ['suggestions'])
         elem.append(this.suggestionElement)
-        if (autofocus) {
-            this.inputElement.focus()
-            this.inputElement.prop('autofocus', true)
-        }
     }
 
     bind(f:(a:Action, s:string) => void) {
         this.submit = f
+    }
+
+    focus() {
+        this.inputElement.focus()
     }
 
     reset() {
@@ -182,6 +181,7 @@ type Action = {kind: 'raw'}
     | {kind: 'now'}
     | {kind: 'last', minutes: number}
     | {kind: 'until', time: string}
+    | {kind: 'untilMinutes', minutes: number}
     | {kind: 'after', time: string}
 
 interface Rule {
@@ -195,6 +195,7 @@ const rules:Rule[] = [
     {pattern: [['first'], 'number'], action: xs => ({kind: 'first', minutes: parseInt(xs[1])})},
     {pattern: [['last'], 'number'], action: xs => ({kind: 'last', minutes: parseInt(xs[1])})},
     {pattern: [['until'], 'time'], action: xs => ({kind: 'until', time: xs[1]})},
+    {pattern: [['until'], 'number'], action: xs => ({kind: 'untilMinutes', minutes: parseInt(xs[1])})},
     {pattern: [['after'], 'time'], action: xs => ({kind: 'after', time: xs[1]})}
 
 ]
@@ -214,7 +215,6 @@ function splitPrefix(s:string): [string, string] {
 }
 
 function match(s:string): MatchResult {
-    debugger;
     const xs = s.split(' ')
     let partial = false
     for (const rule of rules) {

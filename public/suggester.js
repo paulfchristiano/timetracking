@@ -27,9 +27,8 @@ var __values = (this && this.__values) || function(o) {
 };
 import { Matcher } from './matcher.js';
 var InputBox = /** @class */ (function () {
-    function InputBox(universe, elem, autofocus) {
+    function InputBox(universe, elem) {
         var _this = this;
-        if (autofocus === void 0) { autofocus = true; }
         this.universe = universe;
         this.elem = elem;
         this.suggestions = [];
@@ -43,13 +42,12 @@ var InputBox = /** @class */ (function () {
         this.inputElement.keyup(function (e) { return _this.keyup(e); });
         this.suggestionElement = makeElement('div', ['suggestions']);
         elem.append(this.suggestionElement);
-        if (autofocus) {
-            this.inputElement.focus();
-            this.inputElement.prop('autofocus', true);
-        }
     }
     InputBox.prototype.bind = function (f) {
         this.submit = f;
+    };
+    InputBox.prototype.focus = function () {
+        this.inputElement.focus();
     };
     InputBox.prototype.reset = function () {
         this.inputElement.val('');
@@ -191,6 +189,7 @@ var rules = [
     { pattern: [['first'], 'number'], action: function (xs) { return ({ kind: 'first', minutes: parseInt(xs[1]) }); } },
     { pattern: [['last'], 'number'], action: function (xs) { return ({ kind: 'last', minutes: parseInt(xs[1]) }); } },
     { pattern: [['until'], 'time'], action: function (xs) { return ({ kind: 'until', time: xs[1] }); } },
+    { pattern: [['until'], 'number'], action: function (xs) { return ({ kind: 'untilMinutes', minutes: parseInt(xs[1]) }); } },
     { pattern: [['after'], 'time'], action: function (xs) { return ({ kind: 'after', time: xs[1] }); } }
 ];
 //Remove the part at the beginning that is a keyword
@@ -202,7 +201,6 @@ function splitPrefix(s) {
 }
 function match(s) {
     var e_1, _a;
-    debugger;
     var xs = s.split(' ');
     var partial = false;
     try {
