@@ -834,13 +834,35 @@ function hidePopup(): void {
     $('#popup').attr('active', 'false')
 }
 
+function saveProfile(profile:Profile): void {
+    localStorage.setItem('profile', serializeProfile(profile))
+}
+
+function loadProfile(): Profile {
+    const s:string|null = localStorage.getItem('profile')
+    if (s == '' || s == null) return emptyProfile()
+    return deserializeProfile(s)
+}
+
 export function loadLabels() {
     const entries = loadEntries()
     const labels:Label[] = getDistinctLabels(entries)
+    const profile = loadProfile()
     labels.sort()
+    function makeLabelDiv(label:Label): JQE {
+        const colorHex = colorToHex(getColor(label, profile))
+        const result = $(`<div class='label'>${label}</div>`)
+        const picker = $(`<input type='color' id='${label}-color' class='colorpicker' value='${colorHex}'></input>`)
+        result.append(picker)
+        picker.change(function() {
+            profile.colors.set(label, colorFromHex((picker.val() as string)))
+            saveProfile(profile)
+        })
+        return result
+    }
+    const main = $('#labels')
     for (const label of labels) {
-        const e = $(`<div class='label'>${label}</div>`)
-        $('#labels').append(e)
+        main.append(makeLabelDiv(label))
     }
 }
 
@@ -934,9 +956,39 @@ interface Profile {
     colors: Map<Label, Color>
 }
 
+function serializeProfile(profile:Profile): string {
+    const parts = []
+    for (const [label, color] of profile.colors.entries()) {
+        parts.push(`${label},${colorToHex(color)}`)
+    }
+    return parts.join(';')
+}
+
+function deserializeProfile(s:string): Profile {
+    const result = emptyProfile()
+    for (const pair of s.split(';')) {
+        const parts = pair.split(',')
+        if (parts.length != 2) {
+            console.log('Bad part')
+        }
+        result.colors.set(parts[0], colorFromHex(parts[1])))
+    }
+    return result
+}
+
 //Random integetr between 1 and n-1
 function randInt(n:number): number {
     return Math.floor(n * Math.random())
+}
+
+export function loadColors() {
+    const e = $(`<input type='color' id='colorpicker'></input>`)
+    const button = $(`<div>Done!</div>`)
+    $('#main').append(e)
+    $('#main').append(button)
+    button.click(function() {
+        console.log(e.val())
+    })
 }
 
 const colors = ['#fc6472', '#f4b2a6', '#eccdb3', '#bcefd0', '#a1e8e4', '#23c8b2', '#c3ecee']
@@ -950,6 +1002,10 @@ function randomColor() {
         b: randInt(256),
     }
     */
+}
+
+function colorToHex(c:Color) {
+    return `#${c.r.toString(16)}${c.g.toString(16)}${c.b.toString(16)}`
 }
 
 function colorFromHex(hex:string){

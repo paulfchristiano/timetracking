@@ -1,4 +1,12 @@
 .label {
     margin-top: 1em;
     margin-left: 1em;
+    font-size: 1.5em;
+}
+
+.colorpicker {
+    margin-left: 1em;
+    border: none;
+    padding: 0px;
+    width: 2em;
 }
