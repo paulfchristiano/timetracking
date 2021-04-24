@@ -151,7 +151,7 @@ function zoomedPopup(entries, startIndex, endIndex, profile, popup, callback) {
         }
         finally { if (e_1) throw e_1.error; }
     }
-    var input = new InputBox(getNames(entries), $('.inputwrapper'));
+    var input = new InputBox(getDistinctLabels(entries), $('.inputwrapper'));
     input.bind(function (a, s) {
         switch (a.kind) {
             case 'raw':
@@ -260,7 +260,7 @@ export function loadTracker() {
     }
     function startInput(elem, start, end) {
         $('.inputwrapper').empty();
-        var x = new InputBox(getNames(entries), elem);
+        var x = new InputBox(getDistinctLabels(entries), elem);
         x.focus();
         if (end == null) {
             x.bind(function (a, s) {
@@ -752,7 +752,7 @@ function namesFrom(label) {
         }
     });
 }
-function getNames(entries) {
+function getDistinctLabels(entries) {
     var e_15, _a, e_16, _b, e_17, _c;
     var s = new Set();
     try {
@@ -1038,6 +1038,26 @@ function hidePopup() {
     $('#priorcal').empty();
     $('#popup').attr('active', 'false');
 }
+export function loadLabels() {
+    var e_22, _a;
+    var entries = loadEntries();
+    var labels = getDistinctLabels(entries);
+    labels.sort();
+    try {
+        for (var labels_1 = __values(labels), labels_1_1 = labels_1.next(); !labels_1_1.done; labels_1_1 = labels_1.next()) {
+            var label = labels_1_1.value;
+            var e_23 = $("<div class='label'>" + label + "</div>");
+            $('#labels').append(e_23);
+        }
+    }
+    catch (e_22_1) { e_22 = { error: e_22_1 }; }
+    finally {
+        try {
+            if (labels_1_1 && !labels_1_1.done && (_a = labels_1.return)) _a.call(labels_1);
+        }
+        finally { if (e_22) throw e_22.error; }
+    }
+}
 export function loadCalendar() {
     $('#calendardiv').click(function (e) {
         hidePopup();
@@ -1053,7 +1073,7 @@ export function loadCalendar() {
     showCalendar(entries, null, emptyProfile(), callback);
 }
 function showCalendar(entries, initialPopup, profile, callback) {
-    var e_22, _a, e_23, _b;
+    var e_24, _a, e_25, _b;
     var days = [];
     for (var i = 0; i < 7; i++) {
         var d = daysAgo(6 - i);
@@ -1081,35 +1101,35 @@ function showCalendar(entries, initialPopup, profile, callback) {
             getCalendarColumn(day.index).empty();
         }
     }
-    catch (e_22_1) { e_22 = { error: e_22_1 }; }
+    catch (e_24_1) { e_24 = { error: e_24_1 }; }
     finally {
         try {
             if (days_1_1 && !days_1_1.done && (_a = days_1.return)) _a.call(days_1);
         }
-        finally { if (e_22) throw e_22.error; }
+        finally { if (e_24) throw e_24.error; }
     }
     var _loop_4 = function (i, start, j, end) {
-        var e_24, _a;
+        var e_26, _a;
         try {
-            for (var days_2 = (e_24 = void 0, __values(days)), days_2_1 = days_2.next(); !days_2_1.done; days_2_1 = days_2.next()) {
+            for (var days_2 = (e_26 = void 0, __values(days)), days_2_1 = days_2.next(); !days_2_1.done; days_2_1 = days_2.next()) {
                 var day = days_2_1.value;
                 var range = partInDay(start.time, end.time, day);
                 if (range !== null) {
-                    var e_25 = calendarSpan(labelFrom(start, end), range.start, range.end, day.start, day.end, profile);
-                    e_25.click(function (e) {
+                    var e_27 = calendarSpan(labelFrom(start, end), range.start, range.end, day.start, day.end, profile);
+                    e_27.click(function (e) {
                         popup(i, j);
                         e.stopPropagation();
                     });
-                    getCalendarColumn(day.index).append(e_25);
+                    getCalendarColumn(day.index).append(e_27);
                 }
             }
         }
-        catch (e_24_1) { e_24 = { error: e_24_1 }; }
+        catch (e_26_1) { e_26 = { error: e_26_1 }; }
         finally {
             try {
                 if (days_2_1 && !days_2_1.done && (_a = days_2.return)) _a.call(days_2);
             }
-            finally { if (e_24) throw e_24.error; }
+            finally { if (e_26) throw e_26.error; }
         }
     };
     try {
@@ -1118,12 +1138,12 @@ function showCalendar(entries, initialPopup, profile, callback) {
             _loop_4(i, start, j, end);
         }
     }
-    catch (e_23_1) { e_23 = { error: e_23_1 }; }
+    catch (e_25_1) { e_25 = { error: e_25_1 }; }
     finally {
         try {
             if (_d && !_d.done && (_b = _c.return)) _b.call(_c);
         }
-        finally { if (e_23) throw e_23.error; }
+        finally { if (e_25) throw e_25.error; }
     }
     if (initialPopup != null)
         popup(initialPopup[0], initialPopup[1]);
@@ -1148,12 +1168,22 @@ function group(name, view) {
 function randInt(n) {
     return Math.floor(n * Math.random());
 }
+var colors = ['#fc6472', '#f4b2a6', '#eccdb3', '#bcefd0', '#a1e8e4', '#23c8b2', '#c3ecee'];
 function randomColor() {
+    return colorFromHex(colors[randInt(colors.length)]);
+    /*
     return {
         r: randInt(256),
         g: randInt(256),
         b: randInt(256),
-    };
+    }
+    */
+}
+function colorFromHex(hex) {
+    if (hex[0] == '#') {
+        hex = hex.slice(1);
+    }
+    return { r: parseInt(hex.slice(0, 2), 16), g: parseInt(hex.slice(2, 4), 16), b: parseInt(hex.slice(4, 6), 16) };
 }
 function getColor(label, profile) {
     var result = profile.colors.get(label);
@@ -1277,7 +1307,7 @@ function find(xs, x) {
 //TODO: I want to somehow block the user from moving time past another entry
 //(But at any rate I'll need to figure out how to resolve such conflicts in the DB...)
 function applyUpdate(update, entries, indices) {
-    var e_26, _a, _b;
+    var e_28, _a, _b;
     switch (update.kind) {
         case 'composite':
             try {
@@ -1286,12 +1316,12 @@ function applyUpdate(update, entries, indices) {
                     _b = __read(applyUpdate(u, entries, indices), 2), entries = _b[0], indices = _b[1];
                 }
             }
-            catch (e_26_1) { e_26 = { error: e_26_1 }; }
+            catch (e_28_1) { e_28 = { error: e_28_1 }; }
             finally {
                 try {
                     if (_d && !_d.done && (_a = _c.return)) _a.call(_c);
                 }
-                finally { if (e_26) throw e_26.error; }
+                finally { if (e_28) throw e_28.error; }
             }
             break;
         case 'relabel':
@@ -1399,8 +1429,8 @@ function applyUpdate(
 }
 */
 function listPairsAndEnds(xs) {
-    var a, b, xs_2, xs_2_1, x, e_27_1;
-    var e_27, _a;
+    var a, b, xs_2, xs_2_1, x, e_29_1;
+    var e_29, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -1425,14 +1455,14 @@ function listPairsAndEnds(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_27_1 = _b.sent();
-                e_27 = { error: e_27_1 };
+                e_29_1 = _b.sent();
+                e_29 = { error: e_29_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_2_1 && !xs_2_1.done && (_a = xs_2.return)) _a.call(xs_2);
                 }
-                finally { if (e_27) throw e_27.error; }
+                finally { if (e_29) throw e_29.error; }
                 return [7 /*endfinally*/];
             case 8:
                 if (!(b != null)) return [3 /*break*/, 10];
@@ -1445,8 +1475,8 @@ function listPairsAndEnds(xs) {
     });
 }
 function listPairs(xs) {
-    var _a, _b, _c, x, y, e_28_1;
-    var e_28, _d;
+    var _a, _b, _c, x, y, e_30_1;
+    var e_30, _d;
     return __generator(this, function (_e) {
         switch (_e.label) {
             case 0:
@@ -1466,22 +1496,22 @@ function listPairs(xs) {
                 return [3 /*break*/, 1];
             case 4: return [3 /*break*/, 7];
             case 5:
-                e_28_1 = _e.sent();
-                e_28 = { error: e_28_1 };
+                e_30_1 = _e.sent();
+                e_30 = { error: e_30_1 };
                 return [3 /*break*/, 7];
             case 6:
                 try {
                     if (_b && !_b.done && (_d = _a.return)) _d.call(_a);
                 }
-                finally { if (e_28) throw e_28.error; }
+                finally { if (e_30) throw e_30.error; }
                 return [7 /*endfinally*/];
             case 7: return [2 /*return*/];
         }
     });
 }
 function enumerate(xs) {
-    var i, xs_3, xs_3_1, x, e_29_1;
-    var e_29, _a;
+    var i, xs_3, xs_3_1, x, e_31_1;
+    var e_31, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -1504,14 +1534,14 @@ function enumerate(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_29_1 = _b.sent();
-                e_29 = { error: e_29_1 };
+                e_31_1 = _b.sent();
+                e_31 = { error: e_31_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_3_1 && !xs_3_1.done && (_a = xs_3.return)) _a.call(xs_3);
                 }
-                finally { if (e_29) throw e_29.error; }
+                finally { if (e_31) throw e_31.error; }
                 return [7 /*endfinally*/];
             case 8: return [2 /*return*/];
         }
@@ -1559,8 +1589,8 @@ function revit(xs) {
 }
 //Returns the same set of elements, but with booleans flagging first and last
 function markTails(xs) {
-    var first, next, start, xs_4, xs_4_1, x, e_30_1;
-    var e_30, _a;
+    var first, next, start, xs_4, xs_4_1, x, e_32_1;
+    var e_32, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -1591,14 +1621,14 @@ function markTails(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_30_1 = _b.sent();
-                e_30 = { error: e_30_1 };
+                e_32_1 = _b.sent();
+                e_32 = { error: e_32_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_4_1 && !xs_4_1.done && (_a = xs_4.return)) _a.call(xs_4);
                 }
-                finally { if (e_30) throw e_30.error; }
+                finally { if (e_32) throw e_32.error; }
                 return [7 /*endfinally*/];
             case 8: return [4 /*yield*/, [first, true, next]];
             case 9:
@@ -1609,7 +1639,7 @@ function markTails(xs) {
 }
 //TODO: make all this logic work with entries instead of spans
 function multiPopup(entries, callback) {
-    var e_31, _a;
+    var e_33, _a;
     $('#popup').attr('active', 'true');
     $('#popup').html('');
     function renderEntry(entry) {
@@ -1649,12 +1679,12 @@ function multiPopup(entries, callback) {
             }
         }
     }
-    catch (e_31_1) { e_31 = { error: e_31_1 }; }
+    catch (e_33_1) { e_33 = { error: e_33_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_31) throw e_31.error; }
+        finally { if (e_33) throw e_33.error; }
     }
 }
 function zip(xs, ys) {

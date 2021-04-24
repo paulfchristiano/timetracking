@@ -86,7 +86,7 @@ function zoomedPopup(
             $('#minical').append(elem)
         }
     }
-    const input = new InputBox(getNames(entries), $('.inputwrapper'))
+    const input = new InputBox(getDistinctLabels(entries), $('.inputwrapper'))
     input.bind((a, s) => {
         switch (a.kind) {
             case 'raw':
@@ -204,7 +204,7 @@ export function loadTracker(): void {
     }
     function startInput(elem:JQE, start:Entry, end:Entry|null): void {
         $('.inputwrapper').empty()
-        const x = new InputBox(getNames(entries), elem)
+        const x = new InputBox(getDistinctLabels(entries), elem)
         x.focus()
         if (end == null) {
             x.bind((a, s) => {
@@ -594,7 +594,7 @@ function* namesFrom(label:Label|undefined): Generator<Label> {
     }
 }
 
-function getNames(entries:Entry[]): string[] {
+function getDistinctLabels(entries:Entry[]): Label[] {
     const s:Set<string> = new Set()
     for (const entry of entries) {
         for (const name of namesFrom(entry.before)) {
@@ -834,6 +834,16 @@ function hidePopup(): void {
     $('#popup').attr('active', 'false')
 }
 
+export function loadLabels() {
+    const entries = loadEntries()
+    const labels:Label[] = getDistinctLabels(entries)
+    labels.sort()
+    for (const label of labels) {
+        const e = $(`<div class='label'>${label}</div>`)
+        $('#labels').append(e)
+    }
+}
+
 export function loadCalendar() {
     $('#calendardiv').click((e) => {
         hidePopup()
@@ -929,12 +939,24 @@ function randInt(n:number): number {
     return Math.floor(n * Math.random())
 }
 
+const colors = ['#fc6472', '#f4b2a6', '#eccdb3', '#bcefd0', '#a1e8e4', '#23c8b2', '#c3ecee']
+
 function randomColor() {
+    return colorFromHex(colors[randInt(colors.length)])
+    /*
     return {
         r: randInt(256),
         g: randInt(256),
         b: randInt(256),
     }
+    */
+}
+
+function colorFromHex(hex:string){
+    if (hex[0] == '#') {
+        hex = hex.slice(1)
+    }
+    return {r: parseInt(hex.slice(0, 2), 16), g: parseInt(hex.slice(2, 4), 16), b: parseInt(hex.slice(4,6), 16)}
 }
 
 interface Color {
@@ -942,6 +964,8 @@ interface Color {
     g: number,
     b: number,
 }
+
+
 
 function getColor(label:Label, profile:Profile): Color {
     let result = profile.colors.get(label)
