@@ -124,7 +124,7 @@ function zoomedPopup(
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex+1],
-                    time: parseTime(a.time, entries[startIndex].time),
+                    time: parseTime(a.time, entries[startIndex].time, 'next'),
                     labelBefore: s
                 })
                 break
@@ -142,7 +142,7 @@ function zoomedPopup(
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex+1],
-                    time: parseTime(a.time, entries[startIndex].time),
+                    time: parseTime(a.time, entries[startIndex].time, 'next'),
                     labelAfter: s
                 })
                 break
@@ -229,13 +229,13 @@ export function loadTracker(): void {
                         callback({kind: 'relabel', label: s, before:start})
                         break
                     case 'until':
-                        callback({kind: 'append', before: s, time: parseTime(a.time, new Date())})
+                        callback({kind: 'append', before: s, time: parseTime(a.time, new Date(), 'last')})
                         break
                     case 'untilMinutes':
                         callback({kind: 'append', before: s, time: minutesAfter(new Date(), -a.minutes)})
                         break    
                     case 'after':
-                        callback({kind: 'append', after: s, time: parseTime(a.time, new Date())})
+                        callback({kind: 'append', after: s, time: parseTime(a.time, new Date(), 'last')})
                         break
                     default: assertNever(a)
                 }
@@ -258,13 +258,13 @@ export function loadTracker(): void {
                         callback({kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
                         break
                     case 'until':
-                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: parseTime(a.time, start.time)})
+                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: parseTime(a.time, start.time, 'next')})
                         break
                     case 'untilMinutes':
                         callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
                         break
                     case 'after':
-                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: parseTime(a.time, start.time)})
+                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: parseTime(a.time, start.time, 'next')})
                         break
                     default: assertNever(a)
                 }
@@ -302,7 +302,8 @@ export function loadTracker(): void {
                 */
                 const row = $(`<div class='trackertimerow'></div>`)
                 row.append('<div class="dot"></div>')
-                row.append($(`<div class='timelabel'>${renderTime(end.time)}</div>`))
+                const time = $(`<div class='timelabel' contenteditable='true'>${renderTime(end.time)}</div>`)
+                row.append(time)
                 elem.append(row)
             }
             //TODO unify these two cases
@@ -629,7 +630,7 @@ function convertDate(d:Date): MyDate {
         year: d.getFullYear(),
         month: d.toLocaleString('default', {month: 'short'}),
         day: d.getDate(),
-        hour: (d.getHours() - 1) % 12 + 1,
+        hour: (d.getHours() + 11) % 12 + 1,
         ampm: d.getHours() < 12 ? 'am' : 'pm',
         minute: (d.getMinutes())
     }
@@ -658,7 +659,7 @@ function renderTime(date:Date): string {
 
 //TODO: takes as input a date and a string
 //fills in the date and AM/PM to get the closest thing in time
-function parseTime(s:string, d:Date): Date {
+function parseTime(s:string, d:Date, rel:'next'|'last'|'closest' = 'closest'): Date {
     const parts = s.split(':').map(s => parseInt(s.trim()))
     if (parts.length == 2 && !parts.some(isNaN)) {
         const candidate = new Date(d)
@@ -669,10 +670,12 @@ function parseTime(s:string, d:Date): Date {
             for (const hours of [parts[0], (parts[0]+12)%24]) {
                 candidate.setDate(d.getDate() + dayDelta)
                 candidate.setHours(hours)
-                const diff = Math.abs(candidate.getTime() - d.getTime())
-                if (bestDiff == null || diff < bestDiff) {
+                const diff = candidate.getTime() - d.getTime()
+                const absDiff = Math.abs(diff)
+                const isValid = (rel=='closest') || (rel == 'next' && diff > 0) || (rel == 'last' && diff < 0)
+                if ((bestDiff == null || absDiff < bestDiff) && isValid) {
                     best = new Date(candidate)
-                    bestDiff = diff
+                    bestDiff = absDiff
                 }
             }
         }
@@ -971,7 +974,7 @@ function deserializeProfile(s:string): Profile {
         if (parts.length != 2) {
             console.log('Bad part')
         }
-        result.colors.set(parts[0], colorFromHex(parts[1])))
+        result.colors.set(parts[0], colorFromHex(parts[1]))
     }
     return result
 }
@@ -1367,54 +1370,6 @@ function* markTails<T>(xs:Generator<T>): Generator<[boolean, boolean, T]> {
         first = false
     }
     yield [first, true, next]
-}
-
-//TODO: make all this logic work with entries instead of spans
-function multiPopup(entries:Entry[], callback: (u:TimeUpdate) => void): void {
-    $('#popup').attr('active', 'true')
-    $('#popup').html('')
-    function renderEntry(entry:Entry) {
-        const timeElem = inputAfterColon('Time', renderTime(entry.time),
-            (s:string) => callback({kind: 'move', entry: entry, time: parseTime(s, entry.time)})
-        )
-        timeElem.css('position', 'relative')
-        $('#popup').append(timeElem)
-    }
-    function renderSpan(start:Entry, stop:Entry) {
-        const label = labelFrom(start, stop)
-        const labelElem = inputAfterColon('Activity', label,
-            (s:string) => callback({kind: 'relabel', before:start, after:stop, label: s}) 
-        )
-        labelElem.css('position', 'relative')
-        const splitButton = $("<div class='splitbutton button'>+</div>")
-        splitButton.click(() => {
-            callback({kind: 'split', before: start, after: stop, time: mid(start.time, stop.time)})
-        })
-        labelElem.append(splitButton)
-        const upButton = $("<div class='upbutton button'>↑</div>")
-        upButton.click(() => {
-            callback({kind: 'merge', entry: start, label:label})
-        })
-        labelElem.append(upButton)
-        const downButton = $("<div class='downbutton button'>↓</div>")
-        downButton.click(() => {
-            callback({kind: 'merge', entry: stop, label:label})
-        })
-        labelElem.append(downButton)
-        $('#popup').append(labelElem)
-    }
-    for (const [start, stop] of listPairsAndEnds(it(entries))) {
-        if (start != null) {
-            renderEntry(start)
-        }
-        if (start != null && stop != null) {
-            renderSpan(start, stop)
-        }
-    }
-}
-
-function zip<X, Y>(xs:X[], ys:Y[]): [X, Y][] {
-    return xs.map((x, i) => [x, ys[i]])
 }
 
 function getCalendarColumn(n:number): any {

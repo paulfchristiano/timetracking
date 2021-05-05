@@ -189,7 +189,7 @@ function zoomedPopup(entries, startIndex, endIndex, profile, popup, callback) {
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex + 1],
-                    time: parseTime(a.time, entries[startIndex].time),
+                    time: parseTime(a.time, entries[startIndex].time, 'next'),
                     labelBefore: s
                 });
                 break;
@@ -207,7 +207,7 @@ function zoomedPopup(entries, startIndex, endIndex, profile, popup, callback) {
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex + 1],
-                    time: parseTime(a.time, entries[startIndex].time),
+                    time: parseTime(a.time, entries[startIndex].time, 'next'),
                     labelAfter: s
                 });
                 break;
@@ -285,13 +285,13 @@ export function loadTracker() {
                         callback({ kind: 'relabel', label: s, before: start });
                         break;
                     case 'until':
-                        callback({ kind: 'append', before: s, time: parseTime(a.time, new Date()) });
+                        callback({ kind: 'append', before: s, time: parseTime(a.time, new Date(), 'last') });
                         break;
                     case 'untilMinutes':
                         callback({ kind: 'append', before: s, time: minutesAfter(new Date(), -a.minutes) });
                         break;
                     case 'after':
-                        callback({ kind: 'append', after: s, time: parseTime(a.time, new Date()) });
+                        callback({ kind: 'append', after: s, time: parseTime(a.time, new Date(), 'last') });
                         break;
                     default: assertNever(a);
                 }
@@ -315,13 +315,13 @@ export function loadTracker() {
                         callback({ kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes) });
                         break;
                     case 'until':
-                        callback({ kind: 'split', labelBefore: s, before: start, after: end, time: parseTime(a.time, start.time) });
+                        callback({ kind: 'split', labelBefore: s, before: start, after: end, time: parseTime(a.time, start.time, 'next') });
                         break;
                     case 'untilMinutes':
                         callback({ kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes) });
                         break;
                     case 'after':
-                        callback({ kind: 'split', labelAfter: s, before: start, after: end, time: parseTime(a.time, start.time) });
+                        callback({ kind: 'split', labelAfter: s, before: start, after: end, time: parseTime(a.time, start.time, 'next') });
                         break;
                     default: assertNever(a);
                 }
@@ -372,7 +372,8 @@ export function loadTracker() {
                 */
                 var row = $("<div class='trackertimerow'></div>");
                 row.append('<div class="dot"></div>');
-                row.append($("<div class='timelabel'>" + renderTime(end.time) + "</div>"));
+                var time = $("<div class='timelabel' contenteditable='true'>" + renderTime(end.time) + "</div>");
+                row.append(time);
                 elem.append(row);
             }
             //TODO unify these two cases
@@ -806,7 +807,7 @@ function convertDate(d) {
         year: d.getFullYear(),
         month: d.toLocaleString('default', { month: 'short' }),
         day: d.getDate(),
-        hour: (d.getHours() - 1) % 12 + 1,
+        hour: (d.getHours() + 11) % 12 + 1,
         ampm: d.getHours() < 12 ? 'am' : 'pm',
         minute: (d.getMinutes())
     };
@@ -837,8 +838,9 @@ function renderTime(date) {
 }
 //TODO: takes as input a date and a string
 //fills in the date and AM/PM to get the closest thing in time
-function parseTime(s, d) {
+function parseTime(s, d, rel) {
     var e_18, _a, e_19, _b;
+    if (rel === void 0) { rel = 'closest'; }
     var parts = s.split(':').map(function (s) { return parseInt(s.trim()); });
     if (parts.length == 2 && !parts.some(isNaN)) {
         var candidate = new Date(d);
@@ -853,10 +855,12 @@ function parseTime(s, d) {
                         var hours = _f.value;
                         candidate.setDate(d.getDate() + dayDelta);
                         candidate.setHours(hours);
-                        var diff = Math.abs(candidate.getTime() - d.getTime());
-                        if (bestDiff == null || diff < bestDiff) {
+                        var diff = candidate.getTime() - d.getTime();
+                        var absDiff = Math.abs(diff);
+                        var isValid = (rel == 'closest') || (rel == 'next' && diff > 0) || (rel == 'last' && diff < 0);
+                        if ((bestDiff == null || absDiff < bestDiff) && isValid) {
                             best = new Date(candidate);
-                            bestDiff = diff;
+                            bestDiff = absDiff;
                         }
                     }
                 }
@@ -1709,59 +1713,6 @@ function markTails(xs) {
                 return [2 /*return*/];
         }
     });
-}
-//TODO: make all this logic work with entries instead of spans
-function multiPopup(entries, callback) {
-    var e_34, _a;
-    $('#popup').attr('active', 'true');
-    $('#popup').html('');
-    function renderEntry(entry) {
-        var timeElem = inputAfterColon('Time', renderTime(entry.time), function (s) { return callback({ kind: 'move', entry: entry, time: parseTime(s, entry.time) }); });
-        timeElem.css('position', 'relative');
-        $('#popup').append(timeElem);
-    }
-    function renderSpan(start, stop) {
-        var label = labelFrom(start, stop);
-        var labelElem = inputAfterColon('Activity', label, function (s) { return callback({ kind: 'relabel', before: start, after: stop, label: s }); });
-        labelElem.css('position', 'relative');
-        var splitButton = $("<div class='splitbutton button'>+</div>");
-        splitButton.click(function () {
-            callback({ kind: 'split', before: start, after: stop, time: mid(start.time, stop.time) });
-        });
-        labelElem.append(splitButton);
-        var upButton = $("<div class='upbutton button'>↑</div>");
-        upButton.click(function () {
-            callback({ kind: 'merge', entry: start, label: label });
-        });
-        labelElem.append(upButton);
-        var downButton = $("<div class='downbutton button'>↓</div>");
-        downButton.click(function () {
-            callback({ kind: 'merge', entry: stop, label: label });
-        });
-        labelElem.append(downButton);
-        $('#popup').append(labelElem);
-    }
-    try {
-        for (var _b = __values(listPairsAndEnds(it(entries))), _c = _b.next(); !_c.done; _c = _b.next()) {
-            var _d = __read(_c.value, 2), start = _d[0], stop_1 = _d[1];
-            if (start != null) {
-                renderEntry(start);
-            }
-            if (start != null && stop_1 != null) {
-                renderSpan(start, stop_1);
-            }
-        }
-    }
-    catch (e_34_1) { e_34 = { error: e_34_1 }; }
-    finally {
-        try {
-            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
-        }
-        finally { if (e_34) throw e_34.error; }
-    }
-}
-function zip(xs, ys) {
-    return xs.map(function (x, i) { return [x, ys[i]]; });
 }
 function getCalendarColumn(n) {
     return $("td:nth-child(" + (n + 2) + ")");
