@@ -89,3 +89,91 @@ body {
   .eventtext {
       padding: 0.5rem;
   }
+
+  .popup {
+    position:absolute;
+    visibility:hidden;
+    display: flex;
+    top:5em;
+    left:5em;
+    font-size: 1.5em;
+    border: 3px solid;
+    border-radius: 6px;
+    width: 20em;
+    padding: 1em;
+    background: white;
+    z-index:3;
+}
+
+.popup[active='true'] {
+    visibility:visible;
+}
+
+#popupright {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 15em;
+    margin-left: 1em;
+}
+
+#popupleft {
+    position: relative;
+}
+
+#starttime {
+    margin-top: 3.5em;
+}
+
+#endtime {
+    margin-bottom: 3.5em;
+}
+
+#priorcal {
+    height: 4em;
+    position: relative;
+}
+#nextcal {
+    height: 4em;
+    position: relative;
+}
+#minical {
+    height: 20em;
+    width: 4em;
+    position: relative;
+}
+
+.popup input {
+    position: relative;
+padding: 4px;
+font-size: 1em;
+border: 0;
+margin: 0;
+}
+
+.button {
+cursor: pointer;
+color: grey;
+position: absolute;
+}
+
+.upbutton {
+left: -0.9em;
+font-size: 0.7em;
+top: -0.8em;
+}
+.downbutton {
+left: -0.9em;
+font-size: 0.7em;
+top: 1.5em;
+}
+.splitbutton {
+left: -0.8em;
+font-size: 0.8em;
+top: 0.1em;
+}
+
+#popupinput {
+    margin-top: auto;
+    margin-bottom: auto
+}

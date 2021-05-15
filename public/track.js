@@ -107,6 +107,13 @@ function calendarSpan(label, spanStart, spanEnd, start, end, profile) {
     var result = $("<div class='event' style='" + style + "'><div class='spantext'>" + label + "</div></div>");
     return result;
 }
+function labelPopup(label, callback) {
+    $('#popup').attr('active', 'true');
+    $('#popuplabel').text(label);
+    $('#newlabel').empty();
+    $('#newlabel').append(inputAfterColon('Rename to', '', function (s) { return callback({ kind: 'bulkRename', from: label, to: s }); }));
+    $('#movechildren').prop('checked', true);
+}
 function zoomedPopup(entries, startIndex, endIndex, profile, popup, callback) {
     var e_1, _a;
     var start = entries[startIndex];
@@ -177,11 +184,10 @@ function zoomedPopup(entries, startIndex, endIndex, profile, popup, callback) {
                 break;
             case 'first':
                 callback({
-                    kind: 'split',
+                    kind: 'spliceSplit',
                     before: entries[startIndex],
-                    after: entries[startIndex + 1],
                     time: minutesAfter(entries[startIndex].time, a.minutes),
-                    labelBefore: s
+                    label: s
                 });
                 break;
             case 'until':
@@ -247,6 +253,52 @@ function twoDigits(n) {
         return s;
     }
 }
+function specToDate(spec, anchor, rel) {
+    var e_4, _a, e_5, _b;
+    var candidate = new Date(anchor);
+    candidate.setMinutes(spec.minutes);
+    var best = new Date(anchor);
+    var bestDiff = null;
+    var month = (spec.month === undefined) ? anchor.getMonth() : spec.month;
+    candidate.setMonth(month);
+    var dateCandidates = (spec.day === undefined) ? [-1, 0, 1].map(function (x) { return anchor.getDate() + x; }) : [spec.day];
+    var ampmCandidates = (spec.ampm === undefined) ? ['am', 'pm'] : [spec.ampm];
+    var hourCandidates = ampmCandidates.map(function (x) { return (x == 'am') ? spec.hours : (spec.hours + 12) % 24; });
+    try {
+        for (var dateCandidates_1 = __values(dateCandidates), dateCandidates_1_1 = dateCandidates_1.next(); !dateCandidates_1_1.done; dateCandidates_1_1 = dateCandidates_1.next()) {
+            var date = dateCandidates_1_1.value;
+            try {
+                for (var hourCandidates_1 = (e_5 = void 0, __values(hourCandidates)), hourCandidates_1_1 = hourCandidates_1.next(); !hourCandidates_1_1.done; hourCandidates_1_1 = hourCandidates_1.next()) {
+                    var hours = hourCandidates_1_1.value;
+                    candidate.setDate(date);
+                    candidate.setHours(hours);
+                    var diff = candidate.getTime() - anchor.getTime();
+                    var absDiff = Math.abs(diff);
+                    var isValid = (rel == 'closest') || (rel == 'next' && diff > 0) || (rel == 'previous' && diff < 0);
+                    if ((bestDiff == null || absDiff < bestDiff) && isValid) {
+                        best = new Date(candidate);
+                        bestDiff = absDiff;
+                    }
+                }
+            }
+            catch (e_5_1) { e_5 = { error: e_5_1 }; }
+            finally {
+                try {
+                    if (hourCandidates_1_1 && !hourCandidates_1_1.done && (_b = hourCandidates_1.return)) _b.call(hourCandidates_1);
+                }
+                finally { if (e_5) throw e_5.error; }
+            }
+        }
+    }
+    catch (e_4_1) { e_4 = { error: e_4_1 }; }
+    finally {
+        try {
+            if (dateCandidates_1_1 && !dateCandidates_1_1.done && (_a = dateCandidates_1.return)) _a.call(dateCandidates_1);
+        }
+        finally { if (e_4) throw e_4.error; }
+    }
+    return best;
+}
 export function loadTracker() {
     var profile = emptyProfile();
     var entries = loadEntries();
@@ -270,7 +322,7 @@ export function loadTracker() {
                         break;
                     //TODO: handle weird cases
                     case 'first':
-                        callback({ kind: 'append', before: s, time: minutesAfter(start.time, a.minutes) });
+                        callback({ kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes) });
                         break;
                     case 'last':
                         callback({ kind: 'composite', updates: [
@@ -285,10 +337,10 @@ export function loadTracker() {
                         callback({ kind: 'relabel', label: s, before: start });
                         break;
                     case 'until':
-                        callback({ kind: 'append', before: s, time: parseTime(a.time, new Date(), 'last') });
+                        callback({ kind: 'spliceSplit', label: s, before: start, time: parseTime(a.time, start.time, 'next') });
                         break;
                     case 'untilMinutes':
-                        callback({ kind: 'append', before: s, time: minutesAfter(new Date(), -a.minutes) });
+                        callback({ kind: 'spliceSplit', label: s, before: start, time: minutesAfter(new Date(), -a.minutes) });
                         break;
                     case 'after':
                         callback({ kind: 'append', after: s, time: parseTime(a.time, new Date(), 'last') });
@@ -304,7 +356,7 @@ export function loadTracker() {
                         callback({ kind: 'relabel', label: s, before: start, after: end });
                         break;
                     case 'first':
-                        callback({ kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.minutes) });
+                        callback({ kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes) });
                         break;
                     case 'now':
                         break;
@@ -315,10 +367,10 @@ export function loadTracker() {
                         callback({ kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes) });
                         break;
                     case 'until':
-                        callback({ kind: 'split', labelBefore: s, before: start, after: end, time: parseTime(a.time, start.time, 'next') });
+                        callback({ kind: 'spliceSplit', label: s, before: start, time: parseTime(a.time, start.time, 'next') });
                         break;
                     case 'untilMinutes':
-                        callback({ kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes) });
+                        callback({ kind: 'spliceSplit', label: s, before: start, time: minutesAfter(end.time, -a.minutes) });
                         break;
                     case 'after':
                         callback({ kind: 'split', labelAfter: s, before: start, after: end, time: parseTime(a.time, start.time, 'next') });
@@ -335,23 +387,23 @@ export function loadTracker() {
             elem.text(renderDuration(new Date().getTime() - start.getTime()));
     }
     setInterval(function () {
-        var e_4, _a;
+        var e_6, _a;
         try {
             for (var heartbeats_1 = __values(heartbeats), heartbeats_1_1 = heartbeats_1.next(); !heartbeats_1_1.done; heartbeats_1_1 = heartbeats_1.next()) {
                 var _b = __read(heartbeats_1_1.value, 2), start = _b[0], elem = _b[1];
                 setTimer(start, elem);
             }
         }
-        catch (e_4_1) { e_4 = { error: e_4_1 }; }
+        catch (e_6_1) { e_6 = { error: e_6_1 }; }
         finally {
             try {
                 if (heartbeats_1_1 && !heartbeats_1_1.done && (_a = heartbeats_1.return)) _a.call(heartbeats_1);
             }
-            finally { if (e_4) throw e_4.error; }
+            finally { if (e_6) throw e_6.error; }
         }
     }, 1000);
     function render() {
-        var e_5, _a;
+        var e_7, _a;
         heartbeats = [];
         var elem = $('#inputs');
         elem.html('');
@@ -372,8 +424,17 @@ export function loadTracker() {
                 */
                 var row = $("<div class='trackertimerow'></div>");
                 row.append('<div class="dot"></div>');
-                var time = $("<div class='timelabel' contenteditable='true'>" + renderTime(end.time) + "</div>");
-                row.append(time);
+                var time_1 = $("<div class='timelabel' contenteditable='true'>" + renderTime(end.time) + "</div>");
+                time_1.blur(function () {
+                    time_1.text(renderTime(end.time));
+                });
+                time_1.keydown(function (e) {
+                    if (e.keyCode == 13) {
+                        e.preventDefault();
+                        callback({ kind: 'move', entry: end, time: parseTime(time_1.text(), end.time) });
+                    }
+                });
+                row.append(time_1);
                 elem.append(row);
             }
             //TODO unify these two cases
@@ -384,8 +445,8 @@ export function loadTracker() {
                 var text = $("<div class='trackerlabel'></div>");
                 text.append($("<div>" + renderLabel(label) + "</div>"));
                 text.append($("<div>" + renderDuration(end.time.getTime() - start.time.getTime()) + "</div>"));
-                var e_6 = $("<div class=\"line\" style='" + style + "''></div>");
-                row.append(e_6);
+                var e_8 = $("<div class=\"line\" style='" + style + "''></div>");
+                row.append(e_8);
                 row.append(text);
                 var inputBuffer = $("<div class='inputbuffer'></div>");
                 var inputWrapper_1 = $("<div class='inputwrapper'></div>");
@@ -409,8 +470,8 @@ export function loadTracker() {
                 setTimer(start.time, timer);
                 text.append(timer);
                 heartbeats.push([start.time, timer]);
-                var e_7 = $("<div class=\"line\" style='" + style + "''></div>");
-                row.append(e_7);
+                var e_9 = $("<div class=\"line\" style='" + style + "''></div>");
+                row.append(e_9);
                 row.append(text);
                 var inputBuffer = $("<div class='inputbuffer'></div>");
                 var inputWrapper_2 = $("<div class='inputwrapper'></div>");
@@ -431,12 +492,12 @@ export function loadTracker() {
                 _loop_2(end, start);
             }
         }
-        catch (e_5_1) { e_5 = { error: e_5_1 }; }
+        catch (e_7_1) { e_7 = { error: e_7_1 }; }
         finally {
             try {
                 if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
             }
-            finally { if (e_5) throw e_5.error; }
+            finally { if (e_7) throw e_7.error; }
         }
     }
     function addEntry(s) {
@@ -453,7 +514,7 @@ export function loadChart() {
     renderChart(loadEntries(), emptyProfile());
 }
 function renderChart(entries, profile) {
-    var e_8, _a;
+    var e_10, _a;
     var timings = getTotalTime(entries, entries[0].time, entries[entries.length - 1].time);
     var datapoints = [];
     try {
@@ -462,12 +523,12 @@ function renderChart(entries, profile) {
             datapoints.push({ label: k, y: v / 3600, color: renderColor(getColor(k, profile)) });
         }
     }
-    catch (e_8_1) { e_8 = { error: e_8_1 }; }
+    catch (e_10_1) { e_10 = { error: e_10_1 }; }
     finally {
         try {
             if (timings_1_1 && !timings_1_1.done && (_a = timings_1.return)) _a.call(timings_1);
         }
-        finally { if (e_8) throw e_8.error; }
+        finally { if (e_10) throw e_10.error; }
     }
     /* tslint:disable-next-line */
     var chart = new CanvasJS.Chart("chartContainer", {
@@ -490,7 +551,7 @@ function length(span) {
     return secondsBetween(span.start.time, span.end.time);
 }
 function renderBars(entries, buckets, profile) {
-    var e_9, _a, e_10, _b, e_11, _c, e_12, _d;
+    var e_11, _a, e_12, _b, e_13, _c, e_14, _d;
     var seconds = [];
     try {
         for (var buckets_1 = __values(buckets), buckets_1_1 = buckets_1.next(); !buckets_1_1.done; buckets_1_1 = buckets_1.next()) {
@@ -499,38 +560,38 @@ function renderBars(entries, buckets, profile) {
             seconds.push(sumByName(spans.map(function (span) { return [span.label, length(span)]; })));
         }
     }
-    catch (e_9_1) { e_9 = { error: e_9_1 }; }
+    catch (e_11_1) { e_11 = { error: e_11_1 }; }
     finally {
         try {
             if (buckets_1_1 && !buckets_1_1.done && (_a = buckets_1.return)) _a.call(buckets_1);
         }
-        finally { if (e_9) throw e_9.error; }
+        finally { if (e_11) throw e_11.error; }
     }
     var keys = new Set();
     try {
         for (var seconds_1 = __values(seconds), seconds_1_1 = seconds_1.next(); !seconds_1_1.done; seconds_1_1 = seconds_1.next()) {
             var m = seconds_1_1.value;
             try {
-                for (var m_1 = (e_11 = void 0, __values(m)), m_1_1 = m_1.next(); !m_1_1.done; m_1_1 = m_1.next()) {
+                for (var m_1 = (e_13 = void 0, __values(m)), m_1_1 = m_1.next(); !m_1_1.done; m_1_1 = m_1.next()) {
                     var k = m_1_1.value;
                     keys.add(k[0]);
                 }
             }
-            catch (e_11_1) { e_11 = { error: e_11_1 }; }
+            catch (e_13_1) { e_13 = { error: e_13_1 }; }
             finally {
                 try {
                     if (m_1_1 && !m_1_1.done && (_c = m_1.return)) _c.call(m_1);
                 }
-                finally { if (e_11) throw e_11.error; }
+                finally { if (e_13) throw e_13.error; }
             }
         }
     }
-    catch (e_10_1) { e_10 = { error: e_10_1 }; }
+    catch (e_12_1) { e_12 = { error: e_12_1 }; }
     finally {
         try {
             if (seconds_1_1 && !seconds_1_1.done && (_b = seconds_1.return)) _b.call(seconds_1);
         }
-        finally { if (e_10) throw e_10.error; }
+        finally { if (e_12) throw e_12.error; }
     }
     var data = [];
     var _loop_3 = function (k) {
@@ -551,12 +612,12 @@ function renderBars(entries, buckets, profile) {
             _loop_3(k);
         }
     }
-    catch (e_12_1) { e_12 = { error: e_12_1 }; }
+    catch (e_14_1) { e_14 = { error: e_14_1 }; }
     finally {
         try {
             if (keys_1_1 && !keys_1_1.done && (_d = keys_1.return)) _d.call(keys_1);
         }
-        finally { if (e_12) throw e_12.error; }
+        finally { if (e_14) throw e_14.error; }
     }
     var chart = new CanvasJS.Chart("chartContainer", {
         animationEnabled: false,
@@ -672,7 +733,7 @@ function incrementMap(map, x, dy) {
     map.set(x, (y || 0) + dy);
 }
 function getTotalTime(entries, start, end) {
-    var e_13, _a;
+    var e_15, _a;
     var result = new Map();
     var spans = spansInRange(start, end, entries);
     try {
@@ -682,17 +743,17 @@ function getTotalTime(entries, start, end) {
             incrementMap(result, span.label, seconds);
         }
     }
-    catch (e_13_1) { e_13 = { error: e_13_1 }; }
+    catch (e_15_1) { e_15 = { error: e_15_1 }; }
     finally {
         try {
             if (spans_1_1 && !spans_1_1.done && (_a = spans_1.return)) _a.call(spans_1);
         }
-        finally { if (e_13) throw e_13.error; }
+        finally { if (e_15) throw e_15.error; }
     }
     return result;
 }
 function sumByName(data) {
-    var e_14, _a;
+    var e_16, _a;
     var result = new Map();
     try {
         for (var data_1 = __values(data), data_1_1 = data_1.next(); !data_1_1.done; data_1_1 = data_1.next()) {
@@ -700,12 +761,12 @@ function sumByName(data) {
             incrementMap(result, datum[0], datum[1]);
         }
     }
-    catch (e_14_1) { e_14 = { error: e_14_1 }; }
+    catch (e_16_1) { e_16 = { error: e_16_1 }; }
     finally {
         try {
             if (data_1_1 && !data_1_1.done && (_a = data_1.return)) _a.call(data_1);
         }
-        finally { if (e_14) throw e_14.error; }
+        finally { if (e_16) throw e_16.error; }
     }
     return result;
 }
@@ -754,45 +815,45 @@ function namesFrom(label) {
     });
 }
 function getDistinctLabels(entries) {
-    var e_15, _a, e_16, _b, e_17, _c;
+    var e_17, _a, e_18, _b, e_19, _c;
     var s = new Set();
     try {
         for (var entries_1 = __values(entries), entries_1_1 = entries_1.next(); !entries_1_1.done; entries_1_1 = entries_1.next()) {
             var entry = entries_1_1.value;
             try {
-                for (var _d = (e_16 = void 0, __values(namesFrom(entry.before))), _e = _d.next(); !_e.done; _e = _d.next()) {
+                for (var _d = (e_18 = void 0, __values(namesFrom(entry.before))), _e = _d.next(); !_e.done; _e = _d.next()) {
                     var name_1 = _e.value;
                     s.add(name_1);
                 }
             }
-            catch (e_16_1) { e_16 = { error: e_16_1 }; }
+            catch (e_18_1) { e_18 = { error: e_18_1 }; }
             finally {
                 try {
                     if (_e && !_e.done && (_b = _d.return)) _b.call(_d);
                 }
-                finally { if (e_16) throw e_16.error; }
+                finally { if (e_18) throw e_18.error; }
             }
             try {
-                for (var _f = (e_17 = void 0, __values(namesFrom(entry.after))), _g = _f.next(); !_g.done; _g = _f.next()) {
+                for (var _f = (e_19 = void 0, __values(namesFrom(entry.after))), _g = _f.next(); !_g.done; _g = _f.next()) {
                     var name_2 = _g.value;
                     s.add(name_2);
                 }
             }
-            catch (e_17_1) { e_17 = { error: e_17_1 }; }
+            catch (e_19_1) { e_19 = { error: e_19_1 }; }
             finally {
                 try {
                     if (_g && !_g.done && (_c = _f.return)) _c.call(_f);
                 }
-                finally { if (e_17) throw e_17.error; }
+                finally { if (e_19) throw e_19.error; }
             }
         }
     }
-    catch (e_15_1) { e_15 = { error: e_15_1 }; }
+    catch (e_17_1) { e_17 = { error: e_17_1 }; }
     finally {
         try {
             if (entries_1_1 && !entries_1_1.done && (_a = entries_1.return)) _a.call(entries_1);
         }
-        finally { if (e_15) throw e_15.error; }
+        finally { if (e_17) throw e_17.error; }
     }
     return Array.from(s.keys());
 }
@@ -812,6 +873,12 @@ function convertDate(d) {
         minute: (d.getMinutes())
     };
 }
+/*
+function roundDate(partial:Partial<MyDate>, d:Date, rel:'next'|'last'|'closest'='cloest'): Date {
+    const years: number[] = (partial.year === undefined) ? neighbors(d.getFullYear()) : [partial.year]
+    const months
+}
+*/
 function renderTime(date) {
     var now = convertDate(new Date());
     var myDate = convertDate(date);
@@ -835,54 +902,6 @@ function renderTime(date) {
         return renderAMPM(myDate);
     else
         return renderTime(myDate);
-}
-//TODO: takes as input a date and a string
-//fills in the date and AM/PM to get the closest thing in time
-function parseTime(s, d, rel) {
-    var e_18, _a, e_19, _b;
-    if (rel === void 0) { rel = 'closest'; }
-    var parts = s.split(':').map(function (s) { return parseInt(s.trim()); });
-    if (parts.length == 2 && !parts.some(isNaN)) {
-        var candidate = new Date(d);
-        candidate.setMinutes(parts[1]);
-        var best = d; //never used
-        var bestDiff = null;
-        try {
-            for (var _c = __values([-1, 0, 1]), _d = _c.next(); !_d.done; _d = _c.next()) {
-                var dayDelta = _d.value;
-                try {
-                    for (var _e = (e_19 = void 0, __values([parts[0], (parts[0] + 12) % 24])), _f = _e.next(); !_f.done; _f = _e.next()) {
-                        var hours = _f.value;
-                        candidate.setDate(d.getDate() + dayDelta);
-                        candidate.setHours(hours);
-                        var diff = candidate.getTime() - d.getTime();
-                        var absDiff = Math.abs(diff);
-                        var isValid = (rel == 'closest') || (rel == 'next' && diff > 0) || (rel == 'last' && diff < 0);
-                        if ((bestDiff == null || absDiff < bestDiff) && isValid) {
-                            best = new Date(candidate);
-                            bestDiff = absDiff;
-                        }
-                    }
-                }
-                catch (e_19_1) { e_19 = { error: e_19_1 }; }
-                finally {
-                    try {
-                        if (_f && !_f.done && (_b = _e.return)) _b.call(_e);
-                    }
-                    finally { if (e_19) throw e_19.error; }
-                }
-            }
-        }
-        catch (e_18_1) { e_18 = { error: e_18_1 }; }
-        finally {
-            try {
-                if (_d && !_d.done && (_a = _c.return)) _a.call(_c);
-            }
-            finally { if (e_18) throw e_18.error; }
-        }
-        return best;
-    }
-    return new Date(d);
 }
 function saveEntries(entries) {
     localStorage.setItem('entries', serializeEntries(entries));
@@ -1036,10 +1055,13 @@ function partInDay(start, stop, day) {
         end: first(day.end, stop)
     };
 }
-function hidePopup() {
+function hideCalPopup() {
     $('#minical').empty();
     $('#nextcal').empty();
     $('#priorcal').empty();
+    $('#popup').attr('active', 'false');
+}
+function hideLabelPopup() {
     $('#popup').attr('active', 'false');
 }
 function saveProfile(profile) {
@@ -1052,14 +1074,29 @@ function loadProfile() {
     return deserializeProfile(s);
 }
 export function loadLabels() {
-    var e_22, _a;
     var entries = loadEntries();
+    showLabels(entries);
+    $('#labels').click(hideLabelPopup);
+}
+function showLabels(entries) {
+    var e_22, _a;
     var labels = getDistinctLabels(entries);
     var profile = loadProfile();
     labels.sort();
+    function callback(update) {
+        entries = applyUpdate(update, entries, [])[0];
+        showLabels(entries);
+        saveEntries(entries);
+    }
     function makeLabelDiv(label) {
         var colorHex = colorToHex(getColor(label, profile));
-        var result = $("<div class='label'>" + label + "</div>");
+        var l = $("<span>" + label + "</span>");
+        var result = $("<div class='label'></div>");
+        result.append(l);
+        l.click(function (e) {
+            e.stopPropagation();
+            labelPopup(label, callback);
+        });
         var picker = $("<input type='color' id='" + label + "-color' class='colorpicker' value='" + colorHex + "'></input>");
         result.append(picker);
         picker.change(function () {
@@ -1069,6 +1106,7 @@ export function loadLabels() {
         return result;
     }
     var main = $('#labels');
+    main.empty();
     try {
         for (var labels_1 = __values(labels), labels_1_1 = labels_1.next(); !labels_1_1.done; labels_1_1 = labels_1.next()) {
             var label = labels_1_1.value;
@@ -1085,7 +1123,7 @@ export function loadLabels() {
 }
 export function loadCalendar() {
     $('#calendardiv').click(function (e) {
-        hidePopup();
+        hideCalPopup();
     });
     var entries = loadEntries();
     sortEntries(entries);
@@ -1253,10 +1291,10 @@ function randomColor() {
     }
     */
 }
-function colorToHex(c) {
-    return "#" + c.r.toString(16) + c.g.toString(16) + c.b.toString(16);
+export function colorToHex(c) {
+    return "#" + c.r.toString(16).padStart(2, "0") + c.g.toString(16).padStart(2, "0") + c.b.toString(16).padStart(2, "0");
 }
-function colorFromHex(hex) {
+export function colorFromHex(hex) {
     if (hex[0] == '#') {
         hex = hex.slice(1);
     }
@@ -1454,9 +1492,35 @@ function applyUpdate(update, entries, indices) {
             entries = entries.concat([newEntry_1]);
             break;
         }
+        case 'spliceSplit': {
+            var newEntry_2 = {
+                time: update.time,
+                after: update.before.after,
+                before: update.label,
+                id: newUID()
+            };
+            entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { after: update.label })); }, entries, update.before);
+            var index_3 = find(entries, update.before);
+            if (index_3 != null) {
+                entries = insertAt(newEntry_2, entries, index_3 + 1);
+                indices = indices.map(function (x) { return (x == null) ? null : (x > index_3) ? x + 1 : x; });
+            }
+            break;
+        }
+        case 'bulkRename':
+            entries = entries.map(function (entry) { return (__assign(__assign({}, entry), { before: remapLabel(entry.before, update.from, update.to), after: remapLabel(entry.after, update.from, update.to) })); });
+            break;
         default: assertNever(update);
     }
     return [entries, indices];
+}
+function remapLabel(label, from, to) {
+    if (label === undefined)
+        return undefined;
+    if (label.slice(0, from.length) === from) {
+        return to + label.slice(from.length);
+    }
+    return label;
 }
 /*
 function applyUpdate(

@@ -1,4 +1,5 @@
 import { Matcher } from './matcher.js'
+import { actionRule, parseString } from './parse.js'
 
 type JQE = JQuery<HTMLElement>
 
@@ -197,7 +198,6 @@ const rules:Rule[] = [
     {pattern: [['until'], 'time'], action: xs => ({kind: 'until', time: xs[1]})},
     {pattern: [['until'], 'number'], action: xs => ({kind: 'untilMinutes', minutes: parseInt(xs[1])})},
     {pattern: [['after'], 'time'], action: xs => ({kind: 'after', time: xs[1]})}
-
 ]
 
 interface MatchResult {
@@ -212,6 +212,13 @@ function splitPrefix(s:string): [string, string] {
     const m = match(s)
     if (m.partial) return [s, '']
     return [m.prefix, m.suffix]
+}
+
+function splitPrefxis(s:string): [string, string] {
+    const m = parseString(actionRule, s)
+    if (m == 'fail') return ['', s]
+    if (m == 'prefix') return [s, '']
+    return [m[1].join(''), m[2].join('')]
 }
 
 function match(s:string): MatchResult {

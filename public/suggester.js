@@ -26,6 +26,7 @@ var __values = (this && this.__values) || function(o) {
     throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
 };
 import { Matcher } from './matcher.js';
+import { actionRule, parseString } from './parse.js';
 var InputBox = /** @class */ (function () {
     function InputBox(universe, elem) {
         var _this = this;
@@ -198,6 +199,14 @@ function splitPrefix(s) {
     if (m.partial)
         return [s, ''];
     return [m.prefix, m.suffix];
+}
+function splitPrefxis(s) {
+    var m = parseString(actionRule, s);
+    if (m == 'fail')
+        return ['', s];
+    if (m == 'prefix')
+        return [s, ''];
+    return [m[1].join(''), m[2].join('')];
 }
 function match(s) {
     var e_1, _a;

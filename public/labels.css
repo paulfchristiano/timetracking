@@ -10,3 +10,21 @@
     padding: 0px;
     width: 2em;
 }
+
+.popup {
+    position:absolute;
+    visibility:hidden;
+    top:5em;
+    left:5em;
+    font-size: 1.5em;
+    border: 3px solid;
+    border-radius: 6px;
+    width: 20em;
+    padding: 1em;
+    background: white;
+    z-index:3;
+}
+
+.popup[active='true'] {
+    visibility:visible;
+}

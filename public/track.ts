@@ -1,6 +1,7 @@
 import e from 'express'
 import { Callbacks, data } from 'jquery'
 import { InputBox } from './suggester.js'
+import { DateSpec, Action } from './parse.js'
 
 interface Entry {
     before?: string,
@@ -43,6 +44,14 @@ function calendarSpan(
     return result
 }
 
+
+function labelPopup(label:Label, callback:(update:TimeUpdate) => void): void {
+    $('#popup').attr('active', 'true')
+    $('#popuplabel').text(label)
+    $('#newlabel').empty()
+    $('#newlabel').append(inputAfterColon('Rename to', '', s => callback({kind: 'bulkRename', from: label, to: s})))
+    $('#movechildren').prop('checked', true)
+}
 
 function zoomedPopup(
     entries:Entry[],
@@ -112,11 +121,10 @@ function zoomedPopup(
                 break
             case 'first':
                 callback({
-                    kind: 'split',
+                    kind: 'spliceSplit',
                     before: entries[startIndex],
-                    after: entries[startIndex+1],
                     time: minutesAfter(entries[startIndex].time, a.minutes),
-                    labelBefore: s
+                    label: s
                 })
                 break
             case 'until':
@@ -192,6 +200,32 @@ function twoDigits(n:number): string {
     }
 }
 
+function specToDate(spec:DateSpec, anchor:Date, rel:'next'|'previous'|'closest'): Date {
+    const candidate = new Date(anchor)
+    candidate.setMinutes(spec.minutes)
+    let best:Date = new Date(anchor);
+    let bestDiff:number|null = null;
+    const month = (spec.month === undefined) ? anchor.getMonth() : spec.month
+    candidate.setMonth(month)
+    const dateCandidates:number[] = (spec.day === undefined) ? [-1, 0, 1].map(x => anchor.getDate() + x) : [spec.day]
+    const ampmCandidates:('am'|'pm')[] = (spec.ampm === undefined) ? ['am', 'pm'] : [spec.ampm]
+    const hourCandidates:number[] = ampmCandidates.map(x => (x == 'am') ? spec.hours : (spec.hours+12)%24)
+    for (const date of dateCandidates) {
+        for (const hours of hourCandidates) {
+            candidate.setDate(date)
+            candidate.setHours(hours)
+            const diff = candidate.getTime() - anchor.getTime()
+            const absDiff = Math.abs(diff)
+            const isValid = (rel=='closest') || (rel == 'next' && diff > 0) || (rel == 'previous' && diff < 0)
+            if ((bestDiff == null || absDiff < bestDiff) && isValid) {
+                best = new Date(candidate)
+                bestDiff = absDiff
+            }
+        }
+    }
+    return best
+}
+
 export function loadTracker(): void {
     const profile:Profile = emptyProfile()
     let entries:Entry[] = loadEntries()
@@ -214,7 +248,7 @@ export function loadTracker(): void {
                         break
                     //TODO: handle weird cases
                     case 'first':
-                        callback({kind: 'append', before: s, time: minutesAfter(start.time, a.minutes)})
+                        callback({kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'last':
                         callback({kind: 'composite', updates: [
@@ -229,10 +263,10 @@ export function loadTracker(): void {
                         callback({kind: 'relabel', label: s, before:start})
                         break
                     case 'until':
-                        callback({kind: 'append', before: s, time: parseTime(a.time, new Date(), 'last')})
+                        callback({kind: 'spliceSplit', label: s, before: start, time: parseTime(a.time, start.time, 'next')})
                         break
                     case 'untilMinutes':
-                        callback({kind: 'append', before: s, time: minutesAfter(new Date(), -a.minutes)})
+                        callback({kind: 'spliceSplit', label: s, before: start, time: minutesAfter(new Date(), -a.minutes)})
                         break    
                     case 'after':
                         callback({kind: 'append', after: s, time: parseTime(a.time, new Date(), 'last')})
@@ -247,7 +281,7 @@ export function loadTracker(): void {
                         callback({kind: 'relabel', label: s, before: start, after: end})
                         break
                     case 'first':
-                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.minutes)})
+                        callback({kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'now':
                         break
@@ -258,10 +292,10 @@ export function loadTracker(): void {
                         callback({kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
                         break
                     case 'until':
-                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: parseTime(a.time, start.time, 'next')})
+                        callback({kind: 'spliceSplit', label: s, before: start, time: parseTime(a.time, start.time, 'next')})
                         break
                     case 'untilMinutes':
-                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
+                        callback({kind: 'spliceSplit', label: s, before: start, time: minutesAfter(end.time, -a.minutes)})
                         break
                     case 'after':
                         callback({kind: 'split', labelAfter: s, before: start, after: end, time: parseTime(a.time, start.time, 'next')})
@@ -303,6 +337,15 @@ export function loadTracker(): void {
                 const row = $(`<div class='trackertimerow'></div>`)
                 row.append('<div class="dot"></div>')
                 const time = $(`<div class='timelabel' contenteditable='true'>${renderTime(end.time)}</div>`)
+                time.blur(function() {
+                    time.text(renderTime(end.time))
+                })
+                time.keydown(function(e) {
+                    if (e.keyCode == 13) {
+                        e.preventDefault()
+                        callback({kind: 'move', entry: end, time: parseTime(time.text(), end.time)})
+                    }
+                })
                 row.append(time)
                 elem.append(row)
             }
@@ -636,6 +679,13 @@ function convertDate(d:Date): MyDate {
     }
 }
 
+/*
+function roundDate(partial:Partial<MyDate>, d:Date, rel:'next'|'last'|'closest'='cloest'): Date {
+    const years: number[] = (partial.year === undefined) ? neighbors(d.getFullYear()) : [partial.year]
+    const months
+}
+*/
+
 function renderTime(date:Date): string {
     const now = convertDate(new Date())
     const myDate = convertDate(date)
@@ -655,33 +705,6 @@ function renderTime(date:Date): string {
     else if (now.month != myDate.month || now.day != myDate.day) return renderDay(myDate)
     else if (now.ampm != myDate.ampm || myDate.hour == 12) return renderAMPM(myDate)
     else return renderTime(myDate)
-}
-
-//TODO: takes as input a date and a string
-//fills in the date and AM/PM to get the closest thing in time
-function parseTime(s:string, d:Date, rel:'next'|'last'|'closest' = 'closest'): Date {
-    const parts = s.split(':').map(s => parseInt(s.trim()))
-    if (parts.length == 2 && !parts.some(isNaN)) {
-        const candidate = new Date(d)
-        candidate.setMinutes(parts[1])
-        let best:Date = d; //never used
-        let bestDiff:number|null = null;
-        for (const dayDelta of [-1, 0, 1]) {
-            for (const hours of [parts[0], (parts[0]+12)%24]) {
-                candidate.setDate(d.getDate() + dayDelta)
-                candidate.setHours(hours)
-                const diff = candidate.getTime() - d.getTime()
-                const absDiff = Math.abs(diff)
-                const isValid = (rel=='closest') || (rel == 'next' && diff > 0) || (rel == 'last' && diff < 0)
-                if ((bestDiff == null || absDiff < bestDiff) && isValid) {
-                    best = new Date(candidate)
-                    bestDiff = absDiff
-                }
-            }
-        }
-        return best
-    }
-    return new Date(d)
 }
 
 function saveEntries(entries:Entry[]) {
@@ -830,10 +853,14 @@ function partInDay(start:Date, stop:Date, day:CalendarDay): null|{start:Date, en
 
 type Indices = Array<number|null>
 
-function hidePopup(): void {
+function hideCalPopup(): void {
     $('#minical').empty()
     $('#nextcal').empty()
     $('#priorcal').empty()
+    $('#popup').attr('active', 'false')
+}
+
+function hideLabelPopup(): void {
     $('#popup').attr('active', 'false')
 }
 
@@ -849,12 +876,28 @@ function loadProfile(): Profile {
 
 export function loadLabels() {
     const entries = loadEntries()
+    showLabels(entries)
+    $('#labels').click(hideLabelPopup)
+}
+
+function showLabels(entries:Entry[]) {
     const labels:Label[] = getDistinctLabels(entries)
     const profile = loadProfile()
     labels.sort()
+    function callback(update:TimeUpdate) {
+        entries = applyUpdate(update, entries, [])[0]
+        showLabels(entries)
+        saveEntries(entries)
+    }
     function makeLabelDiv(label:Label): JQE {
         const colorHex = colorToHex(getColor(label, profile))
-        const result = $(`<div class='label'>${label}</div>`)
+        const l = $(`<span>${label}</span>`)
+        const result = $(`<div class='label'></div>`)
+        result.append(l)
+        l.click(function(e) {
+            e.stopPropagation()
+            labelPopup(label, callback)
+        })
         const picker = $(`<input type='color' id='${label}-color' class='colorpicker' value='${colorHex}'></input>`)
         result.append(picker)
         picker.change(function() {
@@ -864,6 +907,7 @@ export function loadLabels() {
         return result
     }
     const main = $('#labels')
+    main.empty()
     for (const label of labels) {
         main.append(makeLabelDiv(label))
     }
@@ -871,7 +915,7 @@ export function loadLabels() {
 
 export function loadCalendar() {
     $('#calendardiv').click((e) => {
-        hidePopup()
+        hideCalPopup()
     })
     let entries = loadEntries()
     sortEntries(entries)
@@ -1007,11 +1051,11 @@ function randomColor() {
     */
 }
 
-function colorToHex(c:Color) {
-    return `#${c.r.toString(16)}${c.g.toString(16)}${c.b.toString(16)}`
+export function colorToHex(c:Color) {
+    return `#${c.r.toString(16).padStart(2, "0")}${c.g.toString(16).padStart(2, "0")}${c.b.toString(16).padStart(2, "0")}`
 }
 
-function colorFromHex(hex:string){
+export function colorFromHex(hex:string){
     if (hex[0] == '#') {
         hex = hex.slice(1)
     }
@@ -1143,6 +1187,9 @@ type TimeUpdate = {kind: 'relabel', before?: Entry, after?: Entry, label: Label}
     | {kind: 'move', entry: Entry, time: Date}
     | {kind: 'composite', updates: TimeUpdate[]}
     | {kind: 'append', before?: Label, after?:Label, time: Date}
+    //add new_entry after update.before; new_entry.after = update.before.after; new_entry.before = label; update.before.after = update.label;
+    | {kind: 'spliceSplit', before: Entry, label: Label, time: Date} 
+    | {kind: 'bulkRename', from: Label, to:Label}
 
 
 function insertAt<T>(toInsert:T, xs:T[], index:number): T[] {
@@ -1266,9 +1313,42 @@ function applyUpdate(
             entries = entries.concat([newEntry])
             break
         }
+        case 'spliceSplit': {
+            const newEntry:Entry = {
+                time: update.time,
+                after: update.before.after,
+                before: update.label,
+                id: newUID()
+            }
+            entries = applyTo(
+                entry => ({...entry, after: update.label}),
+                entries,
+                update.before
+            )
+            const index = find(entries, update.before)
+            if (index != null) {
+                entries = insertAt(newEntry, entries, index+1)
+                indices = indices.map(x => (x == null) ? null : (x > index) ? x+1 : x)
+            }
+            break
+        }
+        case 'bulkRename':
+            entries = entries.map(entry => ({...entry,
+                before: remapLabel(entry.before, update.from, update.to),
+                after: remapLabel(entry.after, update.from, update.to)
+            }))
+            break
         default: assertNever(update)
     }
     return [entries, indices]
+}
+
+function remapLabel(label:Label|undefined, from:Label, to:Label): Label|undefined {
+    if (label === undefined) return undefined
+    if (label.slice(0, from.length) === from) {
+        return to + label.slice(from.length)
+    }
+    return label
 }
 /*
 function applyUpdate(
