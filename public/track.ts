@@ -1,5 +1,5 @@
 import e from 'express'
-import { Callbacks, data } from 'jquery'
+import { Callbacks, data, readyException } from 'jquery'
 import { InputBox } from './suggester.js'
 import { DateSpec, Action, dateRule, parseString } from './parse.js'
 
@@ -238,7 +238,8 @@ function parseTime(s:string, anchor:Date, rel:'next'|'previous'|'closest'): Date
     return specToDate(m[0], anchor, rel)
 }
 
-export function loadTracker(): void {
+export async function loadTracker(): Promise<void> {
+    const credentials:Credentials = await getCredentials()
     const profile:Profile = loadProfile()
     let entries:Entry[] = loadEntries()
     sortEntries(entries)
@@ -725,7 +726,7 @@ function serializeEntries(entries:Entry[]): string {
 }
 
 function deserializeEntries(s:string): Entry[] {
-    const json = (JSON.parse(s) as {time:number, before:string|undefined, after:string|undefined, id:uid}[])
+    const json = (JSON.parse(s) as {time:number, before:string|undefined, after:string|undefined, id:uid|undefined}[])
     return json.map(x => ({time: new Date(x.time), before:x.before, after:x.after, id: x.id || newUID()}))
 }
 
@@ -1464,3 +1465,206 @@ function* markTails<T>(xs:Generator<T>): Generator<[boolean, boolean, T]> {
 function getCalendarColumn(n:number): any {
     return $(`td:nth-child(${n+2})`)
 }
+
+export type Credentials = {username: string, hashedPassword: string}
+
+function makeCredentials(username:string, password:string): Credentials {
+	return {username: username, hashedPassword: hashPassword(username, password)}
+}
+
+function loginLocal(credentials:Credentials): void {
+	localStorage.setItem('campaignUsername', credentials.username)
+	localStorage.setItem('hashedPassword', credentials.hashedPassword)
+}
+
+function logout() {
+	delete localStorage.campaignUsername
+	delete localStorage.hashedPassword
+}
+
+export function getLocalCredentials(): Credentials|null {
+	const username = localStorage.campaignUsername
+	const hashedPassword = localStorage.hashedPassword
+	if (username !== undefined && hashedPassword !== undefined) {
+		return {
+			username:username,
+			hashedPassword:hashedPassword
+		}
+	} else {
+		return null
+	}
+}
+
+function loginRemote(credentials:Credentials): Promise<boolean> {
+	return new Promise(resolve => {
+		$.post(`login?${credentialParams(credentials)}`, function(data) {
+			if (data != 'ok') {
+				resolve(false)
+			} else {
+				resolve(true)
+			}
+		})
+	})
+}
+
+function signupRemote(credentials:Credentials): Promise<boolean> {
+	return new Promise(resolve => {
+		if (credentials.username == '') {
+			alert('Enter a username and password and click signup')
+		} else {
+			$.post(`signup?${credentialParams(credentials)}`, function(data) {
+				if (data != 'ok') { 
+                    console.log(data)
+					resolve(false)
+				} else {
+					resolve(true)
+				}
+			})
+		}
+	})
+}
+
+async function getCredentials(): Promise<Credentials> {
+    const cred = getLocalCredentials()
+    if (cred !== null) cred
+    return displayLogin()
+}
+
+async function displayLogin(): Promise<Credentials> {
+    $('#loginDialog').html(
+        `<label for="name">Name:</label>` +
+        `<input type='text' id="name"></textarea>` +
+        `<div>` +
+        `<label for="password">Password:</label>` +
+        `<input type='password' id="password"></textarea>` +
+        `</div>` +
+        `<div>` +
+        `<span class="option" choosable id="signup">Sign up</span>` +
+        `<span class="option" choosable id="login">Log in</span>` +
+        `</div>`
+    )
+    //TODO: alert when credentials are no good
+    function credentialsFromForm(): Credentials|null {
+    	return makeCredentials(
+    		$('#name').val() as string, 
+    		$('#password').val() as string
+		)
+    }
+    function exit() {
+    	$('#loginDialog').html('')
+    	$('#loginDialog').attr('active', 'false')
+    }
+    async function login(resolve: (c:Credentials) => void) {
+    	const credentials = credentialsFromForm();
+    	if (credentials !== null) {
+	    	const success = await loginRemote(credentials)
+	    	if (success) {
+	    		loginLocal(credentials)
+	    		exit();
+	    		resolve(credentials);
+	    	} else {
+	    		alert('No existing user found with that name+password')
+	    	}
+    	}
+    }
+    async function signup(resolve: (c:Credentials) => void) {
+    	const credentials = credentialsFromForm();
+    	if (credentials !== null) {
+	    	const success = await signupRemote(credentials)
+    		//TODO actually do things the right way with errors etc.
+	    	if (success) {
+	    		loginLocal(credentials)
+	    		exit();
+	    		resolve(credentials);
+	    	} else {
+	    		alert('Error signing up (probably someone else has that username)')
+	    	}
+    	}
+    }
+    return new Promise((resolve, reject) => {
+        $('#loginDialog').attr('active', 'true')
+        $('.option[id="login"]').click(() => login(resolve))
+        $('.option[id="signup"]').click(() => signup(resolve))
+    })
+}
+
+function credentialParams(credentials:Credentials): string {
+	return `username=${credentials.username}&hashedPassword=${credentials.hashedPassword}`
+}
+
+export function hashPassword(username:string, password:string ):string {
+	return hash(password).toString(16)
+}
+
+// Source: https://werxltd.com/wp/2010/05/13/javascript-implementation-of-javas-string-hashcode-method/
+// (definitely not a PRF)
+function hash(s:string):number{
+    var hash:number = 0;
+    for (var i = 0; i < s.length; i++) {
+        hash = ((hash<<5)-hash)+s.charCodeAt(i)
+    }
+    return hash
+}
+
+/*
+export type AtomicUpdate = {kind: 'insert', entry: Entry}
+    | {kind: 'delete', id: uid}
+    | {kind: 'update', id: uid, fields: Partial<Entry>}
+
+export type RemoteUpdate = {
+    update: AtomicUpdate,
+    id: uid,
+    time: Date
+}
+
+function serializeUpdates(xs:RemoteUpdate[]): string {
+    return JSON.stringify(xs)
+}
+
+function jsonToFields(x:any): Entry|null {
+    let labelBefore:string|undefined = undefined
+    let labelAfter:string|undefined = undefined
+    let time:
+    if (typeof x.labelBefore == 'string') labelBefore = x.labelBefore
+    else if (x.labelBefore !== undefined) return null
+    if (typeof x.labelAfter == 'string') labelAfter = x.labelAfter
+}
+
+function jsonToUpdate(x:any): AtomicUpdate|null {
+    switch (x.kind) {
+        case 'insert':
+            const entry = jsonToEntry(x.entry)
+            if (entry !== null) return {kind: 'insert', entry: entry}
+            break
+        case 'delete':
+            if (typeof x.id == 'string') return {kind: 'delete', id: x.id}
+            break
+        case 'update':
+            const fields = jsonToFields(x.fields)
+            if (fields != null && typeof x.id == 'string') return {kind: 'update', id: x.id, fields: x.fields}
+    }
+    return null
+}
+
+function deserializeUpdates(s:string): RemoteUpdate[] {
+    const result:RemoteUpdate[] = []
+    try {
+        const json = JSON.parse(s)
+        if (Array.isArray(json)) {
+            for (const x of json) {
+                const update = jsonToUpdate(x.update)
+                if (typeof x.id == 'string' && ) {
+                    const s:string = x.id
+                }
+            }
+        }
+    } catch(e) {
+    }
+    return result
+}
+
+function sendUpdates(updates:RemoteUpdate[], callback:(acks:uid[]) => void) {
+    const serializedUpdates = updates.map(serializeUpdate).join(',')
+    $.post('update?updates=${}')
+}
+*/

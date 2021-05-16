@@ -8,3 +8,4 @@ tsconfig.tsbuildinfo
 *~
 *.swp
 *.DS_Store
+.env

@@ -9,6 +9,15 @@ var __assign = (this && this.__assign) || function () {
     };
     return __assign.apply(this, arguments);
 };
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 var __generator = (this && this.__generator) || function (thisArg, body) {
     var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g;
     return g = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
@@ -315,209 +324,220 @@ function parseTime(s, anchor, rel) {
     return specToDate(m[0], anchor, rel);
 }
 export function loadTracker() {
-    var profile = loadProfile();
-    var entries = loadEntries();
-    sortEntries(entries);
-    var focused = null;
-    function callback(update) {
-        var _a, _b;
-        _a = __read(applyUpdate(update, entries, []), 2), entries = _a[0], _b = __read(_a[1], 0);
-        saveEntries(entries);
-        render();
-    }
-    function startInput(elem, start, end) {
-        $('.inputwrapper').empty();
-        var x = new InputBox(getDistinctLabels(entries), elem);
-        x.focus();
-        if (end == null) {
-            x.bind(function (a, s) {
-                switch (a.kind) {
-                    case 'raw':
-                        callback({ kind: 'append', before: (s.length == 0) ? undefined : s, time: new Date() });
-                        break;
-                    //TODO: handle weird cases
-                    case 'first':
-                        callback({ kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes) });
-                        break;
-                    case 'last':
-                        callback({ kind: 'composite', updates: [
-                                { kind: 'append', time: minutesAfter(new Date(), -a.minutes), after: s },
-                                { kind: 'append', time: new Date(), before: s }
-                            ] });
-                        break;
-                    case 'number':
-                        callback({ kind: 'append', before: s, time: minutesAfter(start.time, a.number) });
-                        break;
-                    case 'now':
-                        callback({ kind: 'relabel', label: s, before: start });
-                        break;
-                    case 'until':
-                        callback({ kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next') });
-                        break;
-                    case 'after':
-                        callback({ kind: 'append', after: s, time: specToDate(a.time, new Date(), 'previous') });
-                        break;
-                    default: assertNever(a);
-                }
-            });
+    return __awaiter(this, void 0, void 0, function () {
+        function callback(update) {
+            var _a, _b;
+            _a = __read(applyUpdate(update, entries, []), 2), entries = _a[0], _b = __read(_a[1], 0);
+            saveEntries(entries);
+            render();
         }
-        else {
-            x.bind(function (a, s) {
-                switch (a.kind) {
-                    case 'raw':
-                        callback({ kind: 'relabel', label: s, before: start, after: end });
-                        break;
-                    case 'first':
-                        callback({ kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes) });
-                        break;
-                    case 'now':
-                        break;
-                    case 'number':
-                        callback({ kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.number) });
-                        break;
-                    case 'last':
-                        callback({ kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes) });
-                        break;
-                    case 'until':
-                        callback({ kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next') });
-                        break;
-                    case 'after':
-                        callback({ kind: 'split', labelAfter: s, before: start, after: end, time: specToDate(a.time, start.time, 'next') });
-                        break;
-                    default: assertNever(a);
-                }
-            });
-        }
-    }
-    var heartbeats = [];
-    function setTimer(start, elem) {
-        var diff = new Date().getTime() - start.getTime();
-        if (diff > 1000)
-            elem.text(renderDuration(new Date().getTime() - start.getTime()));
-    }
-    setInterval(function () {
-        var e_6, _a;
-        try {
-            for (var heartbeats_1 = __values(heartbeats), heartbeats_1_1 = heartbeats_1.next(); !heartbeats_1_1.done; heartbeats_1_1 = heartbeats_1.next()) {
-                var _b = __read(heartbeats_1_1.value, 2), start = _b[0], elem = _b[1];
-                setTimer(start, elem);
-            }
-        }
-        catch (e_6_1) { e_6 = { error: e_6_1 }; }
-        finally {
-            try {
-                if (heartbeats_1_1 && !heartbeats_1_1.done && (_a = heartbeats_1.return)) _a.call(heartbeats_1);
-            }
-            finally { if (e_6) throw e_6.error; }
-        }
-    }, 1000);
-    function render() {
-        var e_7, _a;
-        heartbeats = [];
-        var elem = $('#inputs');
-        elem.html('');
-        var _loop_2 = function (end, start) {
-            //end = entries[i]
+        function startInput(elem, start, end) {
+            $('.inputwrapper').empty();
+            var x = new InputBox(getDistinctLabels(entries), elem);
+            x.focus();
             if (end == null) {
-                var row = $("<div class='trackertimerow'></div>");
-                row.append('<div class="nowdot"></div>');
-                row.append($("<div class='timelabel'></div>"));
-                elem.append(row);
-            }
-            else {
-                /*
-                const e = $(`<span class='clickable'>[${renderTime(end.time)}]</span>`)
-                const f = $('<div></div>')
-                f.append(e)
-                elem.append(f)
-                */
-                var row = $("<div class='trackertimerow'></div>");
-                row.append('<div class="dot"></div>');
-                var time_1 = $("<div class='timelabel' contenteditable='true'>" + renderTime(end.time) + "</div>");
-                time_1.blur(function () {
-                    time_1.text(renderTime(end.time));
-                });
-                time_1.keydown(function (e) {
-                    if (e.keyCode == 13) {
-                        e.preventDefault();
-                        var date = parseTime(time_1.text(), end.time, 'closest');
-                        if (date != 'error') {
-                            callback({ kind: 'move', entry: end, time: date });
-                        }
+                x.bind(function (a, s) {
+                    switch (a.kind) {
+                        case 'raw':
+                            callback({ kind: 'append', before: (s.length == 0) ? undefined : s, time: new Date() });
+                            break;
+                        //TODO: handle weird cases
+                        case 'first':
+                            callback({ kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes) });
+                            break;
+                        case 'last':
+                            callback({ kind: 'composite', updates: [
+                                    { kind: 'append', time: minutesAfter(new Date(), -a.minutes), after: s },
+                                    { kind: 'append', time: new Date(), before: s }
+                                ] });
+                            break;
+                        case 'number':
+                            callback({ kind: 'append', before: s, time: minutesAfter(start.time, a.number) });
+                            break;
+                        case 'now':
+                            callback({ kind: 'relabel', label: s, before: start });
+                            break;
+                        case 'until':
+                            callback({ kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next') });
+                            break;
+                        case 'after':
+                            callback({ kind: 'append', after: s, time: specToDate(a.time, new Date(), 'previous') });
+                            break;
+                        default: assertNever(a);
                     }
                 });
-                row.append(time_1);
-                elem.append(row);
             }
-            //TODO unify these two cases
-            if (start != null && end != null) {
-                var label = labelFrom(start, end);
-                var style = "background: " + renderColor(getColor(label, profile)) + "; float: left";
-                var row = $("<div class='trackerrow'></div>");
-                var text = $("<div class='trackerlabel'></div>");
-                text.append($("<div>" + renderLabel(label) + "</div>"));
-                text.append($("<div>" + renderDuration(end.time.getTime() - start.time.getTime()) + "</div>"));
-                var e_8 = $("<div class=\"line\" style='" + style + "''></div>");
-                row.append(e_8);
-                row.append(text);
-                var inputBuffer = $("<div class='inputbuffer'></div>");
-                var inputWrapper_1 = $("<div class='inputwrapper'></div>");
-                inputBuffer.append(inputWrapper_1);
-                row.append(inputBuffer);
-                text.click(function () {
-                    startInput(inputWrapper_1, start, end);
-                    focused = end;
+            else {
+                x.bind(function (a, s) {
+                    switch (a.kind) {
+                        case 'raw':
+                            callback({ kind: 'relabel', label: s, before: start, after: end });
+                            break;
+                        case 'first':
+                            callback({ kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes) });
+                            break;
+                        case 'now':
+                            break;
+                        case 'number':
+                            callback({ kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.number) });
+                            break;
+                        case 'last':
+                            callback({ kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes) });
+                            break;
+                        case 'until':
+                            callback({ kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next') });
+                            break;
+                        case 'after':
+                            callback({ kind: 'split', labelAfter: s, before: start, after: end, time: specToDate(a.time, start.time, 'next') });
+                            break;
+                        default: assertNever(a);
+                    }
                 });
-                elem.append(row);
-                if (focused == end)
-                    startInput(inputWrapper_1, start, end);
-            }
-            if (start != null && end == null) {
-                var label = start.after || 'TBD';
-                var style = "background: gray; float: left";
-                var row = $("<div class='trackerrow'></div>");
-                var text = $("<div class='trackerlabel'></div>");
-                text.append($("<div>" + renderLabel(label) + "</div>"));
-                var timer = $("<div id='runningtimer'></div>");
-                setTimer(start.time, timer);
-                text.append(timer);
-                heartbeats.push([start.time, timer]);
-                var e_9 = $("<div class=\"line\" style='" + style + "''></div>");
-                row.append(e_9);
-                row.append(text);
-                var inputBuffer = $("<div class='inputbuffer'></div>");
-                var inputWrapper_2 = $("<div class='inputwrapper'></div>");
-                inputBuffer.append(inputWrapper_2);
-                row.append(inputBuffer);
-                text.click(function () {
-                    startInput(inputWrapper_2, start, end);
-                    focused = end;
-                });
-                elem.append(row);
-                if (focused == null)
-                    startInput(inputWrapper_2, start, end);
-            }
-        };
-        try {
-            for (var _b = __values(listPairsAndEnds(revit(entries))), _c = _b.next(); !_c.done; _c = _b.next()) {
-                var _d = __read(_c.value, 2), end = _d[0], start = _d[1];
-                _loop_2(end, start);
             }
         }
-        catch (e_7_1) { e_7 = { error: e_7_1 }; }
-        finally {
+        function setTimer(start, elem) {
+            var diff = new Date().getTime() - start.getTime();
+            if (diff > 1000)
+                elem.text(renderDuration(new Date().getTime() - start.getTime()));
+        }
+        function render() {
+            var e_6, _a;
+            heartbeats = [];
+            var elem = $('#inputs');
+            elem.html('');
+            var _loop_2 = function (end, start) {
+                //end = entries[i]
+                if (end == null) {
+                    var row = $("<div class='trackertimerow'></div>");
+                    row.append('<div class="nowdot"></div>');
+                    row.append($("<div class='timelabel'></div>"));
+                    elem.append(row);
+                }
+                else {
+                    /*
+                    const e = $(`<span class='clickable'>[${renderTime(end.time)}]</span>`)
+                    const f = $('<div></div>')
+                    f.append(e)
+                    elem.append(f)
+                    */
+                    var row = $("<div class='trackertimerow'></div>");
+                    row.append('<div class="dot"></div>');
+                    var time_1 = $("<div class='timelabel' contenteditable='true'>" + renderTime(end.time) + "</div>");
+                    time_1.blur(function () {
+                        time_1.text(renderTime(end.time));
+                    });
+                    time_1.keydown(function (e) {
+                        if (e.keyCode == 13) {
+                            e.preventDefault();
+                            var date = parseTime(time_1.text(), end.time, 'closest');
+                            if (date != 'error') {
+                                callback({ kind: 'move', entry: end, time: date });
+                            }
+                        }
+                    });
+                    row.append(time_1);
+                    elem.append(row);
+                }
+                //TODO unify these two cases
+                if (start != null && end != null) {
+                    var label = labelFrom(start, end);
+                    var style = "background: " + renderColor(getColor(label, profile)) + "; float: left";
+                    var row = $("<div class='trackerrow'></div>");
+                    var text = $("<div class='trackerlabel'></div>");
+                    text.append($("<div>" + renderLabel(label) + "</div>"));
+                    text.append($("<div>" + renderDuration(end.time.getTime() - start.time.getTime()) + "</div>"));
+                    var e_7 = $("<div class=\"line\" style='" + style + "''></div>");
+                    row.append(e_7);
+                    row.append(text);
+                    var inputBuffer = $("<div class='inputbuffer'></div>");
+                    var inputWrapper_1 = $("<div class='inputwrapper'></div>");
+                    inputBuffer.append(inputWrapper_1);
+                    row.append(inputBuffer);
+                    text.click(function () {
+                        startInput(inputWrapper_1, start, end);
+                        focused = end;
+                    });
+                    elem.append(row);
+                    if (focused == end)
+                        startInput(inputWrapper_1, start, end);
+                }
+                if (start != null && end == null) {
+                    var label = start.after || 'TBD';
+                    var style = "background: gray; float: left";
+                    var row = $("<div class='trackerrow'></div>");
+                    var text = $("<div class='trackerlabel'></div>");
+                    text.append($("<div>" + renderLabel(label) + "</div>"));
+                    var timer = $("<div id='runningtimer'></div>");
+                    setTimer(start.time, timer);
+                    text.append(timer);
+                    heartbeats.push([start.time, timer]);
+                    var e_8 = $("<div class=\"line\" style='" + style + "''></div>");
+                    row.append(e_8);
+                    row.append(text);
+                    var inputBuffer = $("<div class='inputbuffer'></div>");
+                    var inputWrapper_2 = $("<div class='inputwrapper'></div>");
+                    inputBuffer.append(inputWrapper_2);
+                    row.append(inputBuffer);
+                    text.click(function () {
+                        startInput(inputWrapper_2, start, end);
+                        focused = end;
+                    });
+                    elem.append(row);
+                    if (focused == null)
+                        startInput(inputWrapper_2, start, end);
+                }
+            };
             try {
-                if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+                for (var _b = __values(listPairsAndEnds(revit(entries))), _c = _b.next(); !_c.done; _c = _b.next()) {
+                    var _d = __read(_c.value, 2), end = _d[0], start = _d[1];
+                    _loop_2(end, start);
+                }
             }
-            finally { if (e_7) throw e_7.error; }
+            catch (e_6_1) { e_6 = { error: e_6_1 }; }
+            finally {
+                try {
+                    if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+                }
+                finally { if (e_6) throw e_6.error; }
+            }
         }
-    }
-    function addEntry(s) {
-        entries.push({ before: s, time: now(), id: newUID() });
-        saveEntries(entries);
-        render();
-    }
-    render();
+        function addEntry(s) {
+            entries.push({ before: s, time: now(), id: newUID() });
+            saveEntries(entries);
+            render();
+        }
+        var credentials, profile, entries, focused, heartbeats;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, getCredentials()];
+                case 1:
+                    credentials = _a.sent();
+                    profile = loadProfile();
+                    entries = loadEntries();
+                    sortEntries(entries);
+                    focused = null;
+                    heartbeats = [];
+                    setInterval(function () {
+                        var e_9, _a;
+                        try {
+                            for (var heartbeats_1 = __values(heartbeats), heartbeats_1_1 = heartbeats_1.next(); !heartbeats_1_1.done; heartbeats_1_1 = heartbeats_1.next()) {
+                                var _b = __read(heartbeats_1_1.value, 2), start = _b[0], elem = _b[1];
+                                setTimer(start, elem);
+                            }
+                        }
+                        catch (e_9_1) { e_9 = { error: e_9_1 }; }
+                        finally {
+                            try {
+                                if (heartbeats_1_1 && !heartbeats_1_1.done && (_a = heartbeats_1.return)) _a.call(heartbeats_1);
+                            }
+                            finally { if (e_9) throw e_9.error; }
+                        }
+                    }, 1000);
+                    render();
+                    return [2 /*return*/];
+            }
+        });
+    });
 }
 function emptyProfile() {
     return { colors: new Map() };
@@ -1793,4 +1813,228 @@ function markTails(xs) {
 function getCalendarColumn(n) {
     return $("td:nth-child(" + (n + 2) + ")");
 }
+function makeCredentials(username, password) {
+    return { username: username, hashedPassword: hashPassword(username, password) };
+}
+function loginLocal(credentials) {
+    localStorage.setItem('campaignUsername', credentials.username);
+    localStorage.setItem('hashedPassword', credentials.hashedPassword);
+}
+function logout() {
+    delete localStorage.campaignUsername;
+    delete localStorage.hashedPassword;
+}
+export function getLocalCredentials() {
+    var username = localStorage.campaignUsername;
+    var hashedPassword = localStorage.hashedPassword;
+    if (username !== undefined && hashedPassword !== undefined) {
+        return {
+            username: username,
+            hashedPassword: hashedPassword
+        };
+    }
+    else {
+        return null;
+    }
+}
+function loginRemote(credentials) {
+    return new Promise(function (resolve) {
+        $.post("login?" + credentialParams(credentials), function (data) {
+            if (data != 'ok') {
+                resolve(false);
+            }
+            else {
+                resolve(true);
+            }
+        });
+    });
+}
+function signupRemote(credentials) {
+    return new Promise(function (resolve) {
+        if (credentials.username == '') {
+            alert('Enter a username and password and click signup');
+        }
+        else {
+            $.post("signup?" + credentialParams(credentials), function (data) {
+                if (data != 'ok') {
+                    console.log(data);
+                    resolve(false);
+                }
+                else {
+                    resolve(true);
+                }
+            });
+        }
+    });
+}
+function getCredentials() {
+    return __awaiter(this, void 0, void 0, function () {
+        var cred;
+        return __generator(this, function (_a) {
+            cred = getLocalCredentials();
+            if (cred !== null)
+                cred;
+            return [2 /*return*/, displayLogin()];
+        });
+    });
+}
+function displayLogin() {
+    return __awaiter(this, void 0, void 0, function () {
+        //TODO: alert when credentials are no good
+        function credentialsFromForm() {
+            return makeCredentials($('#name').val(), $('#password').val());
+        }
+        function exit() {
+            $('#loginDialog').html('');
+            $('#loginDialog').attr('active', 'false');
+        }
+        function login(resolve) {
+            return __awaiter(this, void 0, void 0, function () {
+                var credentials, success;
+                return __generator(this, function (_a) {
+                    switch (_a.label) {
+                        case 0:
+                            credentials = credentialsFromForm();
+                            if (!(credentials !== null)) return [3 /*break*/, 2];
+                            return [4 /*yield*/, loginRemote(credentials)];
+                        case 1:
+                            success = _a.sent();
+                            if (success) {
+                                loginLocal(credentials);
+                                exit();
+                                resolve(credentials);
+                            }
+                            else {
+                                alert('No existing user found with that name+password');
+                            }
+                            _a.label = 2;
+                        case 2: return [2 /*return*/];
+                    }
+                });
+            });
+        }
+        function signup(resolve) {
+            return __awaiter(this, void 0, void 0, function () {
+                var credentials, success;
+                return __generator(this, function (_a) {
+                    switch (_a.label) {
+                        case 0:
+                            credentials = credentialsFromForm();
+                            if (!(credentials !== null)) return [3 /*break*/, 2];
+                            return [4 /*yield*/, signupRemote(credentials)
+                                //TODO actually do things the right way with errors etc.
+                            ];
+                        case 1:
+                            success = _a.sent();
+                            //TODO actually do things the right way with errors etc.
+                            if (success) {
+                                loginLocal(credentials);
+                                exit();
+                                resolve(credentials);
+                            }
+                            else {
+                                alert('Error signing up (probably someone else has that username)');
+                            }
+                            _a.label = 2;
+                        case 2: return [2 /*return*/];
+                    }
+                });
+            });
+        }
+        return __generator(this, function (_a) {
+            $('#loginDialog').html("<label for=\"name\">Name:</label>" +
+                "<input type='text' id=\"name\"></textarea>" +
+                "<div>" +
+                "<label for=\"password\">Password:</label>" +
+                "<input type='password' id=\"password\"></textarea>" +
+                "</div>" +
+                "<div>" +
+                "<span class=\"option\" choosable id=\"signup\">Sign up</span>" +
+                "<span class=\"option\" choosable id=\"login\">Log in</span>" +
+                "</div>");
+            return [2 /*return*/, new Promise(function (resolve, reject) {
+                    $('#loginDialog').attr('active', 'true');
+                    $('.option[id="login"]').click(function () { return login(resolve); });
+                    $('.option[id="signup"]').click(function () { return signup(resolve); });
+                })];
+        });
+    });
+}
+function credentialParams(credentials) {
+    return "username=" + credentials.username + "&hashedPassword=" + credentials.hashedPassword;
+}
+export function hashPassword(username, password) {
+    return hash(password).toString(16);
+}
+// Source: https://werxltd.com/wp/2010/05/13/javascript-implementation-of-javas-string-hashcode-method/
+// (definitely not a PRF)
+function hash(s) {
+    var hash = 0;
+    for (var i = 0; i < s.length; i++) {
+        hash = ((hash << 5) - hash) + s.charCodeAt(i);
+    }
+    return hash;
+}
+/*
+export type AtomicUpdate = {kind: 'insert', entry: Entry}
+    | {kind: 'delete', id: uid}
+    | {kind: 'update', id: uid, fields: Partial<Entry>}
+
+export type RemoteUpdate = {
+    update: AtomicUpdate,
+    id: uid,
+    time: Date
+}
+
+function serializeUpdates(xs:RemoteUpdate[]): string {
+    return JSON.stringify(xs)
+}
+
+function jsonToFields(x:any): Entry|null {
+    let labelBefore:string|undefined = undefined
+    let labelAfter:string|undefined = undefined
+    let time:
+    if (typeof x.labelBefore == 'string') labelBefore = x.labelBefore
+    else if (x.labelBefore !== undefined) return null
+    if (typeof x.labelAfter == 'string') labelAfter = x.labelAfter
+}
+
+function jsonToUpdate(x:any): AtomicUpdate|null {
+    switch (x.kind) {
+        case 'insert':
+            const entry = jsonToEntry(x.entry)
+            if (entry !== null) return {kind: 'insert', entry: entry}
+            break
+        case 'delete':
+            if (typeof x.id == 'string') return {kind: 'delete', id: x.id}
+            break
+        case 'update':
+            const fields = jsonToFields(x.fields)
+            if (fields != null && typeof x.id == 'string') return {kind: 'update', id: x.id, fields: x.fields}
+    }
+    return null
+}
+
+function deserializeUpdates(s:string): RemoteUpdate[] {
+    const result:RemoteUpdate[] = []
+    try {
+        const json = JSON.parse(s)
+        if (Array.isArray(json)) {
+            for (const x of json) {
+                const update = jsonToUpdate(x.update)
+                if (typeof x.id == 'string' && ) {
+                    const s:string = x.id
+                }
+            }
+        }
+    } catch(e) {
+    }
+    return result
+}
+
+function sendUpdates(updates:RemoteUpdate[], callback:(acks:uid[]) => void) {
+    const serializedUpdates = updates.map(serializeUpdate).join(',')
+    $.post('update?updates=${}')
+}
+*/ 
 //# sourceMappingURL=track.js.map

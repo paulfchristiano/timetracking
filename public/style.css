@@ -89,3 +89,43 @@ background:black;
     position: relative;
     display: inline-block;
 }
+
+#loginDialog{
+    height: 4em;
+}
+
+.dialogBox {
+    position:absolute;
+    visibility:hidden;
+    top:5em;
+    left:5em;
+    font-size: 1.5em;
+    border: 3px solid;
+    border-radius: 6px;
+    width: 15em;
+    padding: 1em;
+    background: white;
+    z-index:3;
+}
+.dialogBox[active='true'] {
+    visibility:visible;
+}
+
+.option {
+    font-size: 1em;
+    border: 2px solid;
+    border-radius: 5px;
+    padding-left: 3px;
+    padding-right: 3px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    margin-right: 3px;
+    margin-top: 3px;
+    display: inline-block;
+    cursor:default;
+    text-align: center;
+    position: relative;
+    background: white;
+    user-select: none;
+    cursor:pointer;
+}

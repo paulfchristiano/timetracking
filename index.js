@@ -1,3 +1,7 @@
+var __makeTemplateObject = (this && this.__makeTemplateObject) || function (cooked, raw) {
+    if (Object.defineProperty) { Object.defineProperty(cooked, "raw", { value: raw }); } else { cooked.raw = raw; }
+    return cooked;
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -38,6 +42,32 @@ import express from 'express';
 var PORT = process.env.PORT || 5000;
 import postgres from 'postgres';
 var sql = (process.env.DATABASE_URL == undefined) ? null : postgres(process.env.DATABASE_URL);
+function signup(credentials) {
+    return __awaiter(this, void 0, void 0, function () {
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, sql(templateObject_1 || (templateObject_1 = __makeTemplateObject(["INSERT INTO users (name, password_hash)\n             VALUES (\n               ", ",\n               ", "\n    )"], ["INSERT INTO users (name, password_hash)\n             VALUES (\n               ", ",\n               ", "\n    )"])), credentials.username, credentials.hashedPassword)];
+                case 1:
+                    _a.sent();
+                    return [2 /*return*/];
+            }
+        });
+    });
+}
+//TODO: deal with the login logic
+function userExists(credentials) {
+    return __awaiter(this, void 0, void 0, function () {
+        var results;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, sql(templateObject_2 || (templateObject_2 = __makeTemplateObject(["SELECT * FROM users\n      WHERE name=", "\n      AND password_hash=", ""], ["SELECT * FROM users\n      WHERE name=", "\n      AND password_hash=", ""])), credentials.username, credentials.hashedPassword)];
+                case 1:
+                    results = _a.sent();
+                    return [2 /*return*/, (results.length > 0)];
+            }
+        });
+    });
+}
 express()
     .get('/test', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
     return __generator(this, function (_a) {
@@ -46,5 +76,68 @@ express()
     });
 }); })
     .use(express.static('./public'))
+    .post('/signup', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
+    var credentials, e_1;
+    return __generator(this, function (_a) {
+        switch (_a.label) {
+            case 0:
+                credentials = {
+                    username: req.query.username,
+                    hashedPassword: req.query.hashedPassword
+                };
+                if (!(credentials.username.length < 1)) return [3 /*break*/, 1];
+                res.send('Non-empty username required');
+                return [3 /*break*/, 5];
+            case 1:
+                if (!(credentials.hashedPassword.length < 1)) return [3 /*break*/, 2];
+                res.send("Non-empty password hash required (shouldn't be possible)");
+                return [3 /*break*/, 5];
+            case 2:
+                _a.trys.push([2, 4, , 5]);
+                return [4 /*yield*/, signup(credentials)];
+            case 3:
+                _a.sent();
+                res.send('ok');
+                return [3 /*break*/, 5];
+            case 4:
+                e_1 = _a.sent();
+                console.log(e_1);
+                res.send(e_1);
+                return [3 /*break*/, 5];
+            case 5: return [2 /*return*/];
+        }
+    });
+}); })
+    .post('/login', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
+    var credentials, success, e_2;
+    return __generator(this, function (_a) {
+        switch (_a.label) {
+            case 0:
+                credentials = {
+                    username: req.query.username,
+                    hashedPassword: req.query.hashedPassword
+                };
+                _a.label = 1;
+            case 1:
+                _a.trys.push([1, 3, , 4]);
+                return [4 /*yield*/, userExists(credentials)];
+            case 2:
+                success = _a.sent();
+                if (success) {
+                    res.send('ok');
+                }
+                else {
+                    res.send('username+password not found');
+                }
+                return [3 /*break*/, 4];
+            case 3:
+                e_2 = _a.sent();
+                res.send(e_2);
+                return [3 /*break*/, 4];
+            case 4: return [2 /*return*/];
+        }
+    });
+}); })
     .listen(PORT, function () { return console.log("Listening on " + PORT); });
+var templateObject_1, templateObject_2;
 //# sourceMappingURL=index.js.map
