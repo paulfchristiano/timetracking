@@ -57,15 +57,7 @@ var InputBox = /** @class */ (function () {
     InputBox.prototype.keydown = function (e) {
         switch (e.keyCode) {
             case 13:
-                var s = this.getText();
-                var m = parseString(actionRule, this.getText());
-                if (m == 'prefix' || m == 'fail') {
-                    this.submit(rawAction, s);
-                }
-                else {
-                    this.submit(m[0], m[2].trim());
-                }
-                this.reset();
+                this.enter();
                 e.preventDefault();
                 break;
             case 9: //tab
@@ -80,6 +72,17 @@ var InputBox = /** @class */ (function () {
                 break;
         }
     };
+    InputBox.prototype.enter = function () {
+        var s = this.getText();
+        var m = parseString(actionRule, this.getText());
+        if (m == 'prefix' || m == 'fail') {
+            this.submit(rawAction, s);
+        }
+        else {
+            this.submit(m[0], m[2].trim());
+        }
+        this.reset();
+    };
     InputBox.prototype.keyup = function (e) {
         switch (e.keyCode) {
             case 13:
@@ -93,10 +96,21 @@ var InputBox = /** @class */ (function () {
         }
     };
     InputBox.prototype.render = function () {
+        var suggester = this;
         this.suggestionElement.html('');
+        var _loop_1 = function (i) {
+            var suggestion = this_1.suggestions[i];
+            var div = suggestionDiv(suggestion, i == this_1.selected);
+            this_1.suggestionElement.append(div);
+            div.click(function () {
+                suggester.inputElement.val(suggestion);
+                suggester.selected = i;
+                suggester.enter();
+            });
+        };
+        var this_1 = this;
         for (var i = 0; i < this.suggestions.length; i++) {
-            var suggestion = this.suggestions[i];
-            this.suggestionElement.append(suggestionDiv(suggestion, i == this.selected));
+            _loop_1(i);
         }
     };
     InputBox.prototype.currentSuggestion = function () {
@@ -144,7 +158,6 @@ function splitPrefix(s) {
         return ['', s];
     if (m == 'prefix')
         return [s, ''];
-    console.log(m);
     return [m[1], m[2]];
 }
 function suggestionDiv(suggestion, focused) {

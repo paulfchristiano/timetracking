@@ -212,9 +212,10 @@ function specToDate(spec:DateSpec, anchor:Date, rel:'next'|'previous'|'closest')
     let bestDiff:number|null = null;
     const month = (spec.month === undefined) ? anchor.getMonth() : spec.month
     candidate.setMonth(month)
+    const hours:number = (spec.hours == 12) ? 0 : spec.hours
     const dateCandidates:number[] = (spec.day === undefined) ? [-1, 0, 1].map(x => anchor.getDate() + x) : [spec.day]
     const ampmCandidates:('am'|'pm')[] = (spec.ampm === undefined) ? ['am', 'pm'] : [spec.ampm]
-    const hourCandidates:number[] = ampmCandidates.map(x => (x == 'am') ? spec.hours : (spec.hours+12)%24)
+    const hourCandidates:number[] = ampmCandidates.map(x => (x == 'am') ? hours : (hours+12)%24)
     for (const date of dateCandidates) {
         for (const hours of hourCandidates) {
             candidate.setDate(date)

@@ -57,14 +57,7 @@ export class InputBox {
     keydown(e:any) {
         switch (e.keyCode) {
             case 13:
-                const s = this.getText()
-                const m = parseString(actionRule, this.getText())
-                if (m == 'prefix' || m == 'fail') {
-                    this.submit(rawAction, s)
-                } else {
-                    this.submit(m[0], m[2].trim())
-                }
-                this.reset()
+                this.enter()
                 e.preventDefault()
                 break
             case 9: //tab
@@ -77,6 +70,17 @@ export class InputBox {
                 e.preventDefault()
                 break
         }
+    }
+
+    enter() {
+        const s = this.getText()
+        const m = parseString(actionRule, this.getText())
+        if (m == 'prefix' || m == 'fail') {
+            this.submit(rawAction, s)
+        } else {
+            this.submit(m[0], m[2].trim())
+        }
+        this.reset()
     }
     
     keyup(e:any) {
@@ -93,10 +97,17 @@ export class InputBox {
     }
 
     render(): void {
+        const suggester = this;
         this.suggestionElement.html('')
         for (let i = 0; i < this.suggestions.length; i++) {
             const suggestion = this.suggestions[i]
-            this.suggestionElement.append(suggestionDiv(suggestion, i == this.selected))
+            const div = suggestionDiv(suggestion, i == this.selected)
+            this.suggestionElement.append(div)
+            div.click(function() {
+                suggester.inputElement.val(suggestion)
+                suggester.selected = i
+                suggester.enter()
+            })
         }
     }
 
@@ -145,7 +156,6 @@ function splitPrefix(s:string): [string, string] {
     const m = parseString(actionRule, s)
     if (m == 'fail') return ['', s]
     if (m == 'prefix') return [s, '']
-    console.log(m)
     return [m[1], m[2]]
 }
 

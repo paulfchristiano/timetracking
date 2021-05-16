@@ -269,17 +269,18 @@ function specToDate(spec, anchor, rel) {
     var bestDiff = null;
     var month = (spec.month === undefined) ? anchor.getMonth() : spec.month;
     candidate.setMonth(month);
+    var hours = (spec.hours == 12) ? 0 : spec.hours;
     var dateCandidates = (spec.day === undefined) ? [-1, 0, 1].map(function (x) { return anchor.getDate() + x; }) : [spec.day];
     var ampmCandidates = (spec.ampm === undefined) ? ['am', 'pm'] : [spec.ampm];
-    var hourCandidates = ampmCandidates.map(function (x) { return (x == 'am') ? spec.hours : (spec.hours + 12) % 24; });
+    var hourCandidates = ampmCandidates.map(function (x) { return (x == 'am') ? hours : (hours + 12) % 24; });
     try {
         for (var dateCandidates_1 = __values(dateCandidates), dateCandidates_1_1 = dateCandidates_1.next(); !dateCandidates_1_1.done; dateCandidates_1_1 = dateCandidates_1.next()) {
             var date = dateCandidates_1_1.value;
             try {
                 for (var hourCandidates_1 = (e_5 = void 0, __values(hourCandidates)), hourCandidates_1_1 = hourCandidates_1.next(); !hourCandidates_1_1.done; hourCandidates_1_1 = hourCandidates_1.next()) {
-                    var hours = hourCandidates_1_1.value;
+                    var hours_1 = hourCandidates_1_1.value;
                     candidate.setDate(date);
-                    candidate.setHours(hours);
+                    candidate.setHours(hours_1);
                     var diff = candidate.getTime() - anchor.getTime();
                     var absDiff = Math.abs(diff);
                     var isValid = (rel == 'closest') || (rel == 'next' && diff > 0) || (rel == 'previous' && diff < 0);
