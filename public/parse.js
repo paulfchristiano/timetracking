@@ -25,37 +25,46 @@ var __read = (this && this.__read) || function (o, n) {
     }
     return ar;
 };
+// return value is [result, parsed, unparsed]
 export function parseString(rule, s) {
-    return parse(rule, tokenize(s));
+    var tokens = tokenize(s);
+    var result = parse(rule, tokens);
+    if (result == 'fail' || result == 'prefix')
+        return result;
+    return [result[0], tokens.slice(0, result[1]).join(''), tokens.slice(result[1]).join('')];
 }
+// start parsing from token start
 //fail means no match
 //prefix means it may be possible to extend into a match
-//[a, xs, ys] means that a was the result, xs is what got parsed, ys are the remaining tokens
-function parse(rule, tokens) {
+//The first part of the return value is the result
+//The second is the index of the next unparsed token 
+function parse(rule, tokens, start) {
     var e_1, _a, e_2, _b;
+    if (start === void 0) { start = 0; }
     if (tokens.length == 0)
         return 'prefix';
     switch (rule.kind) {
         case 'token':
-            for (var i = 0; i < tokens.length; i++) {
+            for (var i = start; i < tokens.length; i++) {
                 if (rule.applies(tokens[i])) {
-                    return [rule.bind(tokens[i])];
+                    return [rule.bind(tokens[i]), i + 1];
+                }
+                else if (tokens[i] != ' ') {
+                    return 'fail';
                 }
             }
-            if (!rule.applies(tokens[0])) {
-                return 'fail';
-            }
-            return [rule.bind(tokens[0]), [tokens[0]], tokens.slice(1)];
+            return 'prefix';
         case 'sequence':
             var vals = [];
+            var index = start;
             try {
                 for (var _c = __values(rule.parts), _d = _c.next(); !_d.done; _d = _c.next()) {
                     var part = _d.value;
-                    var result = parse(part, tokens);
+                    var result = parse(part, tokens, index);
                     if (result == 'fail' || result == 'prefix')
                         return result;
                     vals.push(result[0]);
-                    tokens = result[1];
+                    index = result[1];
                 }
             }
             catch (e_1_1) { e_1 = { error: e_1_1 }; }
@@ -65,13 +74,13 @@ function parse(rule, tokens) {
                 }
                 finally { if (e_1) throw e_1.error; }
             }
-            return [rule.map(vals), vals, tokens];
+            return [rule.map(vals), index];
         case 'either':
             var prefix = false;
             try {
                 for (var _e = __values(rule.options), _f = _e.next(); !_f.done; _f = _e.next()) {
                     var _g = __read(_f.value, 2), option = _g[0], f = _g[1];
-                    var result = parse(option, tokens);
+                    var result = parse(option, tokens, start);
                     if (result == 'prefix') {
                         prefix = true;
                     }
@@ -79,7 +88,7 @@ function parse(rule, tokens) {
                         continue;
                     }
                     else {
-                        return [f(result[0]), result[1], result[2]];
+                        return [f(result[0]), result[1]];
                     }
                 }
             }
@@ -90,7 +99,7 @@ function parse(rule, tokens) {
                 }
                 finally { if (e_2) throw e_2.error; }
             }
-            return 'fail';
+            return prefix ? 'prefix' : 'fail';
         default:
             return assertNever(rule);
     }
@@ -116,10 +125,7 @@ export function tokenize(s) {
     try {
         for (var s_1 = __values(s), s_1_1 = s_1.next(); !s_1_1.done; s_1_1 = s_1.next()) {
             var c = s_1_1.value;
-            if (c == ' ') {
-                addPart();
-            }
-            else if (splitters.indexOf(c) >= 0) {
+            if (splitters.indexOf(c) >= 0) {
                 addPart();
                 parts.push(c);
             }
@@ -141,21 +147,21 @@ export function tokenize(s) {
     addPart();
     return parts;
 }
-function raw(s, ignoreCaps) {
+export function raw(s, ignoreCaps) {
     if (ignoreCaps === void 0) { ignoreCaps = true; }
     if (ignoreCaps)
         s = s.toLowerCase();
     return { kind: 'token', applies: function (x) { return (ignoreCaps) ? x.toLowerCase() == s : x == s; }, bind: function () { return s; } };
 }
-function anyToken(tokens) {
-    return { kind: 'either', options: tokens.map(function (token, i) { return ([raw(token), function () { return i; }]); }) };
+export function anyToken(tokens) {
+    return { kind: 'token', applies: function (x) { return tokens.indexOf(x.toLowerCase()) >= 0; }, bind: function (x) { return tokens.indexOf(x.toLowerCase()); } };
 }
 var month = anyToken(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Nov', 'Dec']);
-var number = { kind: 'token', applies: function (x) { return !isNaN(parseInt(x)); }, bind: function (x) { return parseInt(x); } };
-function seq(rules, f) {
+export var number = { kind: 'token', applies: function (x) { return !isNaN(parseInt(x)); }, bind: function (x) { return parseInt(x); } };
+export function seq(rules, f) {
     return { kind: 'sequence', parts: rules, map: f };
 }
-function any(rules) {
+export function any(rules) {
     return { kind: 'either', options: rules.map(function (r) { return [r, function (x) { return x; }]; }) };
 }
 var colonTime = seq([number, raw(':'), number], function (xs) { return [xs[0], xs[2]]; });
@@ -176,7 +182,7 @@ var ampmTimeRule = any([
     seq([colonTime, ampm], function (xs) { return ({ hours: xs[0][0], minutes: xs[0][1], ampm: xs[1] }); }),
     seq([number, ampm], function (xs) { return ({ hours: xs[0], minutes: 0, ampm: xs[1] }); })
 ]);
-var dateRule = any([
+export var dateRule = any([
     seq([ampmTimeRule, raw(','), month, number], function (x) { return ({
         hours: x[0].hours,
         minutes: x[0].minutes,
@@ -193,6 +199,7 @@ var dateRule = any([
 function assertNever(value) {
     throw new Error("Shouldn't reach this case!");
 }
+export var rawAction = { kind: 'raw' };
 export var actionRule = any([
     map(number, function (x) { return ({ kind: 'number', number: x }); }),
     map(raw('now'), function () { return ({ kind: 'now' }); }),

@@ -1,5 +1,5 @@
 import { Matcher } from './matcher.js'
-import { actionRule, parseString } from './parse.js'
+import { rawAction, actionRule, parseString, Action } from './parse.js'
 
 type JQE = JQuery<HTMLElement>
 
@@ -57,8 +57,13 @@ export class InputBox {
     keydown(e:any) {
         switch (e.keyCode) {
             case 13:
-                const m = match(this.getText())
-                this.submit(m.action, m.suffix)
+                const s = this.getText()
+                const m = parseString(actionRule, this.getText())
+                if (m == 'prefix' || m == 'fail') {
+                    this.submit(rawAction, s)
+                } else {
+                    this.submit(m[0], m[2].trim())
+                }
                 this.reset()
                 e.preventDefault()
                 break
@@ -127,7 +132,8 @@ export class InputBox {
     // Should be able to call it constantly, doesn't change state
     refresh() {
         const s:string = this.getText()
-        const [prefix, suffix] = splitPrefix(s)
+        let [prefix, suffix] = splitPrefix(s)
+        suffix = suffix.trim()
         this.suggestions = (suffix.length == 0) ? [] : this.matcher.match(suffix).map(
             x => (prefix.length == 0) ? x : `${prefix} ${x}`
         )
@@ -135,111 +141,12 @@ export class InputBox {
     }
 }
 
-type Token = 'number' | 'time' | [string]
-
-function matchToken(s:string, t:Token): 'full' | 'partial' | 'none' {
-    switch (t) {
-        case 'number':
-            const n = parseInt(s)
-            if (isNaN(n)) return 'none'
-            return 'full'
-        case 'time':
-            const parts = s.split(':')
-            if (parts.some(p => parseInt(p) == parseInt('nan')) || parts.length > 2) return 'none'
-            if (parts.length == 2) return 'full'
-            return 'partial'
-        default:
-            if (s == t[0]) return 'full'
-            if (s.length < t[0].length && s == t[0].slice(0, s.length)) return 'partial'
-            return 'none'
-    }
-}
-
-function matchTokens(
-    xs:string[],
-    ts:Token[]
-): 'partial' | 'full'| 'none' {
-    for (let i = 0; i < ts.length; i++) {
-        if (i >= xs.length) return 'partial'
-        const m = matchToken(xs[i], ts[i])
-        switch (m) {
-            case 'full':
-                break
-            case 'partial':
-                if (i == xs.length - 1) return 'partial'
-                else return 'none'
-            case 'none':
-                return 'none'
-            default: return assertNever(m)
-        }
-    }
-    return 'full'
-}
-
-type Action = {kind: 'raw'} 
-    | {kind: 'first', minutes: number}
-    | {kind: 'number', number: number}
-    | {kind: 'now'}
-    | {kind: 'last', minutes: number}
-    | {kind: 'until', time: string}
-    | {kind: 'untilMinutes', minutes: number}
-    | {kind: 'after', time: string}
-
-interface Rule {
-    pattern: Token[],
-    action: (xs:string[]) => Action
-}
-
-const rules:Rule[] = [
-    {pattern: ['number'], action: xs => ({kind: 'number', number: parseInt(xs[0])})},
-    {pattern: [['now']], action: () => ({kind: 'now'})},
-    {pattern: [['first'], 'number'], action: xs => ({kind: 'first', minutes: parseInt(xs[1])})},
-    {pattern: [['last'], 'number'], action: xs => ({kind: 'last', minutes: parseInt(xs[1])})},
-    {pattern: [['until'], 'time'], action: xs => ({kind: 'until', time: xs[1]})},
-    {pattern: [['until'], 'number'], action: xs => ({kind: 'untilMinutes', minutes: parseInt(xs[1])})},
-    {pattern: [['after'], 'time'], action: xs => ({kind: 'after', time: xs[1]})}
-]
-
-interface MatchResult {
-    action: Action,
-    partial: boolean,
-    prefix: string, //does this look like it could be the beginning of a command?
-    suffix: string
-}
-
-//Remove the part at the beginning that is a keyword
 function splitPrefix(s:string): [string, string] {
-    const m = match(s)
-    if (m.partial) return [s, '']
-    return [m.prefix, m.suffix]
-}
-
-function splitPrefxis(s:string): [string, string] {
     const m = parseString(actionRule, s)
     if (m == 'fail') return ['', s]
     if (m == 'prefix') return [s, '']
-    return [m[1].join(''), m[2].join('')]
-}
-
-function match(s:string): MatchResult {
-    const xs = s.split(' ')
-    let partial = false
-    for (const rule of rules) {
-        const m = matchTokens(xs, rule.pattern)
-        switch (m) {
-            case 'full':
-                const prefix = xs.slice(0, rule.pattern.length)
-                const suffix = xs.slice(rule.pattern.length)
-                return {action: rule.action(prefix), partial: false, prefix: prefix.join(' '), suffix: suffix.join(' ')}
-            case 'partial':
-                partial = true
-                break
-            case 'none':
-                break
-            default: assertNever(m)
-        }
-    }
-    return {action: {kind: 'raw'}, prefix: '', suffix: s, partial: partial}
+    console.log(m)
+    return [m[1], m[2]]
 }
 
 function suggestionDiv(suggestion:string, focused:boolean = false): JQE {

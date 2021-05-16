@@ -4,48 +4,54 @@ type Rule<T> = {kind: 'token', bind: (x:string) => T, applies: (x:string) => boo
     | {kind: 'sequence', parts: Rule<any>[], map: (xs:any[]) => T}
     | {kind: 'either', options: [Rule<any>, (x:any) => T][]}
 
-export function parseString<T>(rule:Rule<T>, s:string) {
-    return parse(rule, tokenize(s))
+// return value is [result, parsed, unparsed]
+export function parseString<T>(rule:Rule<T>, s:string): 'fail' | 'prefix' | [T, string, string] {
+    const tokens:string[] = tokenize(s)
+    const result = parse(rule, tokens)
+    if (result == 'fail' || result == 'prefix') return result
+    return [result[0], tokens.slice(0, result[1]).join(''), tokens.slice(result[1]).join('')]
 }
 
+// start parsing from token start
 //fail means no match
 //prefix means it may be possible to extend into a match
-//[a, xs, ys] means that a was the result, xs is what got parsed, ys are the remaining tokens
-function parse<T>(rule:Rule<T>, tokens:string[]): 'fail' | 'prefix' | [T, string[], string[]] {
+//The first part of the return value is the result
+//The second is the index of the next unparsed token 
+function parse<T>(rule:Rule<T>, tokens:string[], start:number=0): 'fail' | 'prefix' | [T, number] {
     if (tokens.length == 0) return 'prefix'
     switch (rule.kind) {
         case 'token':
-            for (let i = 0; i < tokens.length; i++) {
-                if rule.applies(tokens[i]) {
-                    return [rule.bind(tokens[i])]
+            for (let i = start; i < tokens.length; i++) {
+                if (rule.applies(tokens[i])) {
+                    return [rule.bind(tokens[i]), i+1]
+                } else if (tokens[i] != ' ') {
+                    return 'fail'
                 }
             }
-            if (!rule.applies(tokens[0])) {
-                return 'fail'
-            }
-            return [rule.bind(tokens[0]), [tokens[0]], tokens.slice(1)]
+            return 'prefix'
         case 'sequence':
             const vals = []
+            let index = start;
             for (const part of rule.parts) {
-                const result = parse(part, tokens)
+                const result = parse(part, tokens, index)
                 if (result == 'fail' || result == 'prefix') return result
                 vals.push(result[0])
-                tokens = result[1]
+                index = result[1]
             }
-            return [rule.map(vals),vals,tokens]
+            return [rule.map(vals),index]
         case 'either':
             let prefix = false;
             for (const [option, f] of rule.options) {
-                const result = parse(option, tokens)
+                const result = parse(option, tokens, start)
                 if (result == 'prefix') {
                     prefix = true
                 } else if (result == 'fail') { 
                     continue
                 } else {
-                    return [f(result[0]), result[1], result[2]]
+                    return [f(result[0]), result[1]]
                 }
             }
-            return 'fail'
+            return prefix ? 'prefix' : 'fail'
         default:
             return assertNever(rule)
     }
@@ -71,9 +77,7 @@ export function tokenize(s:string): string[] {
         }
     }
     for (const c of s) {
-        if (c == ' ') {
-            addPart()
-        } else if (splitters.indexOf(c) >= 0) {
+        if (splitters.indexOf(c) >= 0) {
             addPart()
             parts.push(c)
         } else {
@@ -87,24 +91,24 @@ export function tokenize(s:string): string[] {
     return parts
 }
 
-function raw(s:string, ignoreCaps:boolean=true): Rule<string> {
+export function raw(s:string, ignoreCaps:boolean=true): Rule<string> {
     if (ignoreCaps) s = s.toLowerCase()
     return {kind: 'token', applies: x => (ignoreCaps) ? x.toLowerCase() == s : x == s, bind: () => s}
 }
 
-function anyToken(tokens:string[]): Rule<number> {
-    return {kind: 'either', options: tokens.map((token, i) => ([raw(token), () => i]))}
+export function anyToken(tokens:string[]): Rule<number> {
+    return {kind: 'token', applies: x => tokens.indexOf(x.toLowerCase()) >= 0, bind: x=> tokens.indexOf(x.toLowerCase())}
 }
 
 const month: Rule<number> = anyToken(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Nov', 'Dec'])
 
-const number: Rule<number> = {kind: 'token', applies: x => !isNaN(parseInt(x)), bind: x => parseInt(x)}
+export const number: Rule<number> = {kind: 'token', applies: x => !isNaN(parseInt(x)), bind: x => parseInt(x)}
 
-function seq<T>(rules:Rule<any>[], f: (xs:any[]) => T): Rule<T> {
+export function seq<T>(rules:Rule<any>[], f: (xs:any[]) => T): Rule<T> {
     return {kind: 'sequence', parts: rules, map: f}
 }
 
-function any<T>(rules:Rule<T>[]): Rule<T> {
+export function any<T>(rules:Rule<T>[]): Rule<T> {
     return {kind: 'either', options: rules.map(r => [r, x => x])}
 }
 
@@ -140,7 +144,7 @@ const ampmTimeRule:Rule<DateSpec> = any([
     seq([number, ampm], xs => ({hours: xs[0], minutes: 0, ampm: xs[1]}))
 ])
 
-const dateRule:Rule<DateSpec> = any<DateSpec>([
+export const dateRule:Rule<DateSpec> = any<DateSpec>([
     seq([ampmTimeRule, raw(','), month, number], x => ({
         hours: x[0].hours,
         minutes: x[0].minutes,
@@ -166,6 +170,8 @@ export type Action = {kind: 'raw'}
     | {kind: 'last', minutes: number}
     | {kind: 'until', time: DateSpec}
     | {kind: 'after', time: DateSpec}
+
+export const rawAction:Action = {kind: 'raw'}
 
 export const actionRule:Rule<Action> = any<Action>([
     map(number, x => ({kind: 'number', number: x})),

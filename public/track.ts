@@ -1,7 +1,7 @@
 import e from 'express'
 import { Callbacks, data } from 'jquery'
 import { InputBox } from './suggester.js'
-import { DateSpec, Action } from './parse.js'
+import { DateSpec, Action, dateRule, parseString } from './parse.js'
 
 interface Entry {
     before?: string,
@@ -132,16 +132,7 @@ function zoomedPopup(
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex+1],
-                    time: parseTime(a.time, entries[startIndex].time, 'next'),
-                    labelBefore: s
-                })
-                break
-            case 'untilMinutes':
-                callback({
-                    kind: 'split',
-                    before: entries[endIndex-1],
-                    after: entries[endIndex],
-                    time: minutesAfter(entries[endIndex].time, -a.minutes),
+                    time: specToDate(a.time, entries[startIndex].time, 'next'),
                     labelBefore: s
                 })
                 break
@@ -150,7 +141,7 @@ function zoomedPopup(
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex+1],
-                    time: parseTime(a.time, entries[startIndex].time, 'next'),
+                    time: specToDate(a.time, entries[startIndex].time, 'next'),
                     labelAfter: s
                 })
                 break
@@ -164,13 +155,27 @@ function zoomedPopup(
     $('#starttime').append(inputAfterColon(
         'Start',
         renderTime(start.time),
-        s => callback({kind: 'move', time: parseTime(s, start.time), entry: start})
+        function(s) {
+            const result = parseString(dateRule, s)
+            if (result == 'fail' || result == 'prefix' || result[2].length > 0) {
+                // TODO: handle error
+            } else {
+                callback({kind: 'move', time: specToDate(result[0], start.time, 'closest'), entry: start})
+            }
+        }
     ))
     $('#endtime').empty()
     $('#endtime').append(inputAfterColon(
         'End',
         renderTime(end.time),
-        s => callback({kind: 'move', time: parseTime(s, end.time), entry: end})
+        function(s) {
+            const result = parseString(dateRule, s)
+            if (result == 'fail' || result == 'prefix' || result[2].length > 0) {
+                // TODO: handle error
+            } else {
+                callback({kind: 'move', time: specToDate(result[0], end.time, 'closest'), entry: end})
+            } 
+        }
     ))
 }
 
@@ -226,6 +231,12 @@ function specToDate(spec:DateSpec, anchor:Date, rel:'next'|'previous'|'closest')
     return best
 }
 
+function parseTime(s:string, anchor:Date, rel:'next'|'previous'|'closest'): Date | 'error' {
+    const m = parseString(dateRule, s)
+    if (m == 'fail' || m == 'prefix' || m[2].length > 0) return 'error'
+    return specToDate(m[0], anchor, rel)
+}
+
 export function loadTracker(): void {
     const profile:Profile = emptyProfile()
     let entries:Entry[] = loadEntries()
@@ -263,13 +274,10 @@ export function loadTracker(): void {
                         callback({kind: 'relabel', label: s, before:start})
                         break
                     case 'until':
-                        callback({kind: 'spliceSplit', label: s, before: start, time: parseTime(a.time, start.time, 'next')})
-                        break
-                    case 'untilMinutes':
-                        callback({kind: 'spliceSplit', label: s, before: start, time: minutesAfter(new Date(), -a.minutes)})
-                        break    
+                        callback({kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next')})
+                        break  
                     case 'after':
-                        callback({kind: 'append', after: s, time: parseTime(a.time, new Date(), 'last')})
+                        callback({kind: 'append', after: s, time: specToDate(a.time, new Date(), 'previous')})
                         break
                     default: assertNever(a)
                 }
@@ -292,13 +300,10 @@ export function loadTracker(): void {
                         callback({kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
                         break
                     case 'until':
-                        callback({kind: 'spliceSplit', label: s, before: start, time: parseTime(a.time, start.time, 'next')})
-                        break
-                    case 'untilMinutes':
-                        callback({kind: 'spliceSplit', label: s, before: start, time: minutesAfter(end.time, -a.minutes)})
+                        callback({kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next')})
                         break
                     case 'after':
-                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: parseTime(a.time, start.time, 'next')})
+                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: specToDate(a.time, start.time, 'next')})
                         break
                     default: assertNever(a)
                 }
@@ -343,7 +348,10 @@ export function loadTracker(): void {
                 time.keydown(function(e) {
                     if (e.keyCode == 13) {
                         e.preventDefault()
-                        callback({kind: 'move', entry: end, time: parseTime(time.text(), end.time)})
+                        const date = parseTime(time.text(), end.time, 'closest')
+                        if (date != 'error') {
+                            callback({kind: 'move', entry: end, time: date})
+                        }
                     }
                 })
                 row.append(time)
