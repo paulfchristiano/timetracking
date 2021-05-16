@@ -315,7 +315,7 @@ function parseTime(s, anchor, rel) {
     return specToDate(m[0], anchor, rel);
 }
 export function loadTracker() {
-    var profile = emptyProfile();
+    var profile = loadProfile();
     var entries = loadEntries();
     sortEntries(entries);
     var focused = null;
@@ -523,7 +523,7 @@ function emptyProfile() {
     return { colors: new Map() };
 }
 export function loadChart() {
-    renderChart(loadEntries(), emptyProfile());
+    renderChart(loadEntries(), loadProfile());
 }
 function renderChart(entries, profile) {
     var e_10, _a;
@@ -728,7 +728,7 @@ function renderBars(entries, buckets, profile) {
 export function loadBars() {
     var entries = loadEntries();
     var buckets = weeklyBuckets();
-    renderBars(entries, buckets, emptyProfile());
+    renderBars(entries, buckets, loadProfile());
 }
 function weeklyBuckets() {
     var result = [];
@@ -1145,7 +1145,7 @@ export function loadCalendar() {
         saveEntries(entries);
         return [entries, indices];
     }
-    showCalendar(entries, null, emptyProfile(), callback);
+    showCalendar(entries, null, loadProfile(), callback);
 }
 function showCalendar(entries, initialPopup, profile, callback) {
     var e_23, _a, e_24, _b;

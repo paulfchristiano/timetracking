@@ -239,7 +239,7 @@ function parseTime(s:string, anchor:Date, rel:'next'|'previous'|'closest'): Date
 }
 
 export function loadTracker(): void {
-    const profile:Profile = emptyProfile()
+    const profile:Profile = loadProfile()
     let entries:Entry[] = loadEntries()
     sortEntries(entries)
     let focused:Entry|null = null;
@@ -419,7 +419,7 @@ function emptyProfile(): Profile {
 }
 
 export function loadChart() {
-    renderChart(loadEntries(), emptyProfile())
+    renderChart(loadEntries(), loadProfile())
 }
 
 function renderChart(entries:Entry[], profile:Profile){
@@ -579,7 +579,7 @@ function renderBars(entries:Entry[], buckets:Bucket[], profile:Profile) {
 export function loadBars() {
     const entries = loadEntries()
     const buckets = weeklyBuckets()
-    renderBars(entries, buckets, emptyProfile())
+    renderBars(entries, buckets, loadProfile())
 }
 
 function weeklyBuckets(): Bucket[] {
@@ -933,7 +933,7 @@ export function loadCalendar() {
         saveEntries(entries)
         return [entries, indices]
     }
-    showCalendar(entries, null, emptyProfile(), callback)
+    showCalendar(entries, null, loadProfile(), callback)
 }
 
 function showCalendar(
