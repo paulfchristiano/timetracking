@@ -1,0 +1,15 @@
+CREATE TABLE users (
+    name TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL
+);
+
+CREATE TABLE entries (
+    username TEXT NOT NULL,
+    time INTEGER NOT NULL,
+    id TEXT,
+    before TEXT,
+    after TEXT,
+    lastModified INTEGER NOT NULL,
+    deleted BOOLEAN NOT NULL,
+    CONSTRAINT uniqueness UNIQUE(username, id)
+);
