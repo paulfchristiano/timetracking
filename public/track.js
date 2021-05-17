@@ -78,14 +78,7 @@ var __spread = (this && this.__spread) || function () {
 };
 import { InputBox } from './suggester.js';
 import { dateRule, parseString } from './parse.js';
-function exampleEntries() {
-    var events = ['breakfast', 'party', 'lunch', 'party', 'dinner', 'sleep', 'breakfast'];
-    var result = [];
-    for (var i = 0; i < events.length; i++) {
-        result.push({ time: hoursAgo(events.length - i), before: events[i], id: newUID() });
-    }
-    return result;
-}
+import { serializeEntries, deserializeEntries, newUID, makeNewEntry } from './entries.js';
 function enumfrom(xs, i, j) {
     var k;
     return __generator(this, function (_a) {
@@ -500,11 +493,6 @@ export function loadTracker() {
                 }
                 finally { if (e_6) throw e_6.error; }
             }
-        }
-        function addEntry(s) {
-            entries.push({ before: s, time: now(), id: newUID() });
-            saveEntries(entries);
-            render();
         }
         var credentials, profile, entries, focused, heartbeats;
         return __generator(this, function (_a) {
@@ -937,13 +925,6 @@ function renderTime(date) {
 }
 function saveEntries(entries) {
     localStorage.setItem('entries', serializeEntries(entries));
-}
-function serializeEntries(entries) {
-    return JSON.stringify(entries.map(function (x) { return ({ time: x.time.getTime(), before: x.before, after: x.after }); }));
-}
-function deserializeEntries(s) {
-    var json = JSON.parse(s);
-    return json.map(function (x) { return ({ time: new Date(x.time), before: x.before, after: x.after, id: x.id || newUID() }); });
 }
 function loadEntries() {
     var s = localStorage.getItem('entries');
@@ -1406,9 +1387,6 @@ function inputAfterColon(head, initial, callback) {
     elem.append(makeInput(initial, callback));
     return elem;
 }
-function newUID() {
-    return Math.random().toString(36).substring(2, 10);
-}
 function assertNever(value) {
     throw new Error("Shouldn't reach this case!");
 }
@@ -1473,29 +1451,24 @@ function applyUpdate(update, entries, indices) {
             break;
         case 'relabel':
             if (update.before !== undefined) {
-                entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { after: update.label })); }, entries, update.before);
+                entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { after: update.label, lastModified: now() })); }, entries, update.before);
             }
             if (update.after !== undefined) {
-                entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { before: update.label })); }, entries, update.after);
+                entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { before: update.label, lastModified: now() })); }, entries, update.after);
             }
             break;
         case 'split':
-            var newEntry = {
-                time: update.time,
-                before: update.labelBefore || update.before.after || update.after.before,
-                after: update.labelAfter || update.after.before || update.before.after,
-                id: newUID()
-            };
+            var newEntry = makeNewEntry(update.time, update.labelBefore || update.before.after || update.after.before, update.labelAfter || update.after.before || update.before.after);
             var index_1 = find(entries, update.before);
             if (index_1 != null) {
                 entries = insertAt(newEntry, entries, index_1 + 1);
                 indices = indices.map(function (x) { return (x == null) ? null : (x > index_1) ? x + 1 : x; });
             }
             if (update.labelBefore !== undefined) {
-                entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { after: update.labelBefore })); }, entries, update.before);
+                entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { after: update.labelBefore, lastModified: now() })); }, entries, update.before);
             }
             if (update.labelAfter !== undefined) {
-                entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { before: update.labelAfter })); }, entries, update.after);
+                entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { before: update.labelAfter, lastModified: now() })); }, entries, update.after);
             }
             break;
         case 'merge': {
@@ -1512,26 +1485,16 @@ function applyUpdate(update, entries, indices) {
             break;
         }
         case 'move':
-            entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { time: update.time })); }, entries, update.entry);
+            entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { time: update.time, lastModified: now() })); }, entries, update.entry);
             break;
         case 'append': {
-            var newEntry_1 = {
-                time: update.time,
-                before: update.before,
-                after: update.after,
-                id: newUID()
-            };
+            var newEntry_1 = makeNewEntry(update.time, update.before, update.after);
             entries = entries.concat([newEntry_1]);
             break;
         }
         case 'spliceSplit': {
-            var newEntry_2 = {
-                time: update.time,
-                after: update.before.after,
-                before: update.label,
-                id: newUID()
-            };
-            entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { after: update.label })); }, entries, update.before);
+            var newEntry_2 = makeNewEntry(update.time, update.before.after, update.label);
+            entries = applyTo(function (entry) { return (__assign(__assign({}, entry), { after: update.label, lastModified: now() })); }, entries, update.before);
             var index_3 = find(entries, update.before);
             if (index_3 != null) {
                 entries = insertAt(newEntry_2, entries, index_3 + 1);
@@ -1540,7 +1503,8 @@ function applyUpdate(update, entries, indices) {
             break;
         }
         case 'bulkRename':
-            entries = entries.map(function (entry) { return (__assign(__assign({}, entry), { before: remapLabel(entry.before, update.from, update.to), after: remapLabel(entry.after, update.from, update.to) })); });
+            entries = entries.map(function (entry) { return (__assign(__assign({}, entry), { before: remapLabel(entry.before, update.from, update.to), after: remapLabel(entry.after, update.from, update.to), lastModified: now() // TODO don't change lastModified except on the entries that actually were
+             })); });
             break;
         default: assertNever(update);
     }
@@ -1975,66 +1939,80 @@ function hash(s) {
     }
     return hash;
 }
-/*
-export type AtomicUpdate = {kind: 'insert', entry: Entry}
-    | {kind: 'delete', id: uid}
-    | {kind: 'update', id: uid, fields: Partial<Entry>}
-
-export type RemoteUpdate = {
-    update: AtomicUpdate,
-    id: uid,
-    time: Date
-}
-
-function serializeUpdates(xs:RemoteUpdate[]): string {
-    return JSON.stringify(xs)
-}
-
-function jsonToFields(x:any): Entry|null {
-    let labelBefore:string|undefined = undefined
-    let labelAfter:string|undefined = undefined
-    let time:
-    if (typeof x.labelBefore == 'string') labelBefore = x.labelBefore
-    else if (x.labelBefore !== undefined) return null
-    if (typeof x.labelAfter == 'string') labelAfter = x.labelAfter
-}
-
-function jsonToUpdate(x:any): AtomicUpdate|null {
-    switch (x.kind) {
-        case 'insert':
-            const entry = jsonToEntry(x.entry)
-            if (entry !== null) return {kind: 'insert', entry: entry}
-            break
-        case 'delete':
-            if (typeof x.id == 'string') return {kind: 'delete', id: x.id}
-            break
-        case 'update':
-            const fields = jsonToFields(x.fields)
-            if (fields != null && typeof x.id == 'string') return {kind: 'update', id: x.id, fields: x.fields}
-    }
-    return null
-}
-
-function deserializeUpdates(s:string): RemoteUpdate[] {
-    const result:RemoteUpdate[] = []
-    try {
-        const json = JSON.parse(s)
-        if (Array.isArray(json)) {
-            for (const x of json) {
-                const update = jsonToUpdate(x.update)
-                if (typeof x.id == 'string' && ) {
-                    const s:string = x.id
-                }
+//Gives the merged list of updates, as well as updates that you'd have to apply to either side
+//to bring it up to merged
+function mergeAndUpdate(xs, ys) {
+    var e_34, _a, e_35, _b;
+    function makeMap(entries) {
+        var e_36, _a;
+        var result = new Map();
+        try {
+            for (var entries_2 = __values(entries), entries_2_1 = entries_2.next(); !entries_2_1.done; entries_2_1 = entries_2.next()) {
+                var entry = entries_2_1.value;
+                result.set(entry.id, entry);
             }
         }
-    } catch(e) {
+        catch (e_36_1) { e_36 = { error: e_36_1 }; }
+        finally {
+            try {
+                if (entries_2_1 && !entries_2_1.done && (_a = entries_2.return)) _a.call(entries_2);
+            }
+            finally { if (e_36) throw e_36.error; }
+        }
+        return result;
     }
-    return result
+    var xMap = makeMap(xs);
+    var yMap = makeMap(ys);
+    var merged = [];
+    var xUpdates = [];
+    var yUpdates = [];
+    try {
+        for (var xs_5 = __values(xs), xs_5_1 = xs_5.next(); !xs_5_1.done; xs_5_1 = xs_5.next()) {
+            var entry = xs_5_1.value;
+            var other = yMap.get(entry.id);
+            if (other == undefined || other.lastModified < entry.lastModified) {
+                yUpdates.push(entry);
+                merged.push(entry);
+            }
+        }
+    }
+    catch (e_34_1) { e_34 = { error: e_34_1 }; }
+    finally {
+        try {
+            if (xs_5_1 && !xs_5_1.done && (_a = xs_5.return)) _a.call(xs_5);
+        }
+        finally { if (e_34) throw e_34.error; }
+    }
+    try {
+        for (var ys_1 = __values(ys), ys_1_1 = ys_1.next(); !ys_1_1.done; ys_1_1 = ys_1.next()) {
+            var entry = ys_1_1.value;
+            var other = xMap.get(entry.id);
+            if (other == undefined || other.lastModified < entry.lastModified) {
+                xUpdates.push(entry);
+                merged.push(entry);
+            }
+        }
+    }
+    catch (e_35_1) { e_35 = { error: e_35_1 }; }
+    finally {
+        try {
+            if (ys_1_1 && !ys_1_1.done && (_b = ys_1.return)) _b.call(ys_1);
+        }
+        finally { if (e_35) throw e_35.error; }
+    }
+    return { merged: merged, xUpdates: xUpdates, yUpdates: yUpdates };
 }
-
-function sendUpdates(updates:RemoteUpdate[], callback:(acks:uid[]) => void) {
-    const serializedUpdates = updates.map(serializeUpdate).join(',')
-    $.post('update?updates=${}')
+function sendUpdates(updates, credentials) {
+    var s = serializeEntries(updates);
+    $.post("update?entries=" + s + "&" + credentialParams(credentials));
 }
-*/ 
+function getEntries(credentials) {
+    return __awaiter(this, void 0, void 0, function () {
+        return __generator(this, function (_a) {
+            return [2 /*return*/, new Promise(function (resolve, reject) {
+                    $.get("entries?" + credentialParams(credentials), function (s) { return resolve(deserializeEntries(s)); });
+                })];
+        });
+    });
+}
 //# sourceMappingURL=track.js.map

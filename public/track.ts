@@ -2,24 +2,8 @@ import e from 'express'
 import { Callbacks, data, readyException } from 'jquery'
 import { InputBox } from './suggester.js'
 import { DateSpec, Action, dateRule, parseString } from './parse.js'
+import { Entry, Label, serializeEntries, deserializeEntries, uid, newUID, makeNewEntry } from './entries.js'
 
-interface Entry {
-    before?: string,
-    after?: string,
-    time: Date,
-    id: uid,
-}
-
-function exampleEntries(): Entry[] {
-    const events = ['breakfast', 'party', 'lunch', 'party', 'dinner', 'sleep', 'breakfast']
-    const result: Entry[] = []
-    for (let i = 0; i < events.length; i++) {
-        result.push({time: hoursAgo(events.length - i), before: events[i], id: newUID()})
-    }
-    return result
-}
-
-type Label = string
 
 function* enumfrom<T>(xs:T[], i:number, j:number): Generator<[number, T]> {
     for (let k = i; k < j; k++) yield [k, xs[k]]
@@ -407,11 +391,6 @@ export async function loadTracker(): Promise<void> {
             }
         }
     }
-    function addEntry(s:string) {
-        entries.push({before: s, time: now(), id: newUID()})
-        saveEntries(entries)
-        render()
-    }
     render()
 }
 
@@ -719,15 +698,6 @@ function renderTime(date:Date): string {
 
 function saveEntries(entries:Entry[]) {
     localStorage.setItem('entries', serializeEntries(entries))
-}
-
-function serializeEntries(entries:Entry[]): string {
-    return JSON.stringify(entries.map(x => ({time: x.time.getTime(), before: x.before, after: x.after})))
-}
-
-function deserializeEntries(s:string): Entry[] {
-    const json = (JSON.parse(s) as {time:number, before:string|undefined, after:string|undefined, id:uid|undefined}[])
-    return json.map(x => ({time: new Date(x.time), before:x.before, after:x.after, id: x.id || newUID()}))
 }
 
 function loadEntries(): Entry[] {
@@ -1177,12 +1147,6 @@ function inputAfterColon(head: string, initial: string, callback: (s:string) => 
     return elem
 }
 
-type uid = string
-
-function newUID(): uid {
-    return Math.random().toString(36).substring(2, 10)
-}
-
 type IDed = {
     id: uid,
 }
@@ -1264,35 +1228,34 @@ function applyUpdate(
         case 'relabel':
             if (update.before !== undefined) {
                 entries = applyTo(
-                    entry => ({...entry, after: update.label}),
+                    entry => ({...entry, after: update.label, lastModified: now()}),
                     entries,
                     update.before
                 )
             }
             if (update.after !== undefined) {
                 entries = applyTo(
-                    entry => ({...entry, before: update.label}),
+                    entry => ({...entry, before: update.label, lastModified: now()}),
                     entries,
                     update.after
                 )
             }
             break
         case 'split': 
-            const newEntry:Entry = {
-                time: update.time,
-                before: update.labelBefore || update.before.after || update.after.before,
-                after: update.labelAfter || update.after.before || update.before.after,
-                id: newUID()
-            }
+            const newEntry:Entry = makeNewEntry(
+                update.time,
+                update.labelBefore || update.before.after || update.after.before,
+                update.labelAfter || update.after.before || update.before.after,
+            )
             const index = find(entries, update.before)
             if (index != null) {
                 entries = insertAt(newEntry, entries, index+1)
                 indices = indices.map(x => (x == null) ? null : (x > index) ? x+1 : x)
             }
             if (update.labelBefore !== undefined) {
-                entries = applyTo(entry => ({...entry, after: update.labelBefore}), entries, update.before)
+                entries = applyTo(entry => ({...entry, after: update.labelBefore, lastModified: now()}), entries, update.before)
             } if (update.labelAfter !== undefined) {
-                entries = applyTo(entry => ({...entry, before: update.labelAfter}), entries, update.after)
+                entries = applyTo(entry => ({...entry, before: update.labelAfter, lastModified: now()}), entries, update.after)
             }
             break
         case 'merge': {
@@ -1308,30 +1271,20 @@ function applyUpdate(
         }
         case 'move':
             entries = applyTo(
-                entry => ({...entry, time: update.time}),
+                entry => ({...entry, time: update.time, lastModified: now()}),
                 entries,
                 update.entry
             )
             break
         case 'append': {
-            const newEntry:Entry = {
-                time: update.time,
-                before: update.before,
-                after: update.after,
-                id: newUID()
-            }
+            const newEntry:Entry = makeNewEntry(update.time, update.before, update.after)
             entries = entries.concat([newEntry])
             break
         }
         case 'spliceSplit': {
-            const newEntry:Entry = {
-                time: update.time,
-                after: update.before.after,
-                before: update.label,
-                id: newUID()
-            }
+            const newEntry:Entry = makeNewEntry(update.time, update.before.after, update.label)
             entries = applyTo(
-                entry => ({...entry, after: update.label}),
+                entry => ({...entry, after: update.label, lastModified: now()}),
                 entries,
                 update.before
             )
@@ -1345,7 +1298,8 @@ function applyUpdate(
         case 'bulkRename':
             entries = entries.map(entry => ({...entry,
                 before: remapLabel(entry.before, update.from, update.to),
-                after: remapLabel(entry.after, update.from, update.to)
+                after: remapLabel(entry.after, update.from, update.to),
+                lastModified: now() // TODO don't change lastModified except on the entries that actually were
             }))
             break
         default: assertNever(update)
@@ -1606,65 +1560,45 @@ function hash(s:string):number{
     return hash
 }
 
-/*
-export type AtomicUpdate = {kind: 'insert', entry: Entry}
-    | {kind: 'delete', id: uid}
-    | {kind: 'update', id: uid, fields: Partial<Entry>}
-
-export type RemoteUpdate = {
-    update: AtomicUpdate,
-    id: uid,
-    time: Date
-}
-
-function serializeUpdates(xs:RemoteUpdate[]): string {
-    return JSON.stringify(xs)
-}
-
-function jsonToFields(x:any): Entry|null {
-    let labelBefore:string|undefined = undefined
-    let labelAfter:string|undefined = undefined
-    let time:
-    if (typeof x.labelBefore == 'string') labelBefore = x.labelBefore
-    else if (x.labelBefore !== undefined) return null
-    if (typeof x.labelAfter == 'string') labelAfter = x.labelAfter
-}
-
-function jsonToUpdate(x:any): AtomicUpdate|null {
-    switch (x.kind) {
-        case 'insert':
-            const entry = jsonToEntry(x.entry)
-            if (entry !== null) return {kind: 'insert', entry: entry}
-            break
-        case 'delete':
-            if (typeof x.id == 'string') return {kind: 'delete', id: x.id}
-            break
-        case 'update':
-            const fields = jsonToFields(x.fields)
-            if (fields != null && typeof x.id == 'string') return {kind: 'update', id: x.id, fields: x.fields}
-    }
-    return null
-}
-
-function deserializeUpdates(s:string): RemoteUpdate[] {
-    const result:RemoteUpdate[] = []
-    try {
-        const json = JSON.parse(s)
-        if (Array.isArray(json)) {
-            for (const x of json) {
-                const update = jsonToUpdate(x.update)
-                if (typeof x.id == 'string' && ) {
-                    const s:string = x.id
-                }
-            }
+//Gives the merged list of updates, as well as updates that you'd have to apply to either side
+//to bring it up to merged
+function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdates: Entry[], yUpdates:Entry[]} {
+    function makeMap(entries:Entry[]): Map<uid,Entry> {
+        const result = new Map()
+        for (const entry of entries) {
+            result.set(entry.id, entry)
         }
-    } catch(e) {
+        return result
     }
-    return result
+    const xMap:Map<uid,Entry> = makeMap(xs)
+    const yMap:Map<uid,Entry> = makeMap(ys)
+    const merged:Entry[] = [];
+    const xUpdates:Entry[] = [];
+    const yUpdates:Entry[] = [];
+    for (const entry of xs) {
+        const other = yMap.get(entry.id)
+        if (other == undefined || other.lastModified < entry.lastModified) {
+            yUpdates.push(entry)
+            merged.push(entry)
+        }
+    }
+    for (const entry of ys) {
+        const other = xMap.get(entry.id)
+        if (other == undefined || other.lastModified < entry.lastModified) {
+            xUpdates.push(entry)
+            merged.push(entry)
+        }
+    }
+    return {merged:merged, xUpdates:xUpdates, yUpdates:yUpdates}
 }
 
-function sendUpdates(updates:RemoteUpdate[], callback:(acks:uid[]) => void) {
-    const serializedUpdates = updates.map(serializeUpdate).join(',')
-    $.post('update?updates=${}')
+function sendUpdates(updates:Entry[], credentials:Credentials) {
+    const s = serializeEntries(updates)
+    $.post(`update?entries=${s}&${credentialParams(credentials)}`)
 }
-*/
+
+async function getEntries(credentials:Credentials): Promise<Entry[]> {
+    return new Promise(function(resolve, reject) {
+        $.get(`entries?${credentialParams(credentials)}`, s => resolve(deserializeEntries(s)))
+    }) 
+}
