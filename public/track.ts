@@ -37,16 +37,32 @@ function labelPopup(label:Label, callback:(update:TimeUpdate) => void): void {
     $('#movechildren').prop('checked', true)
 }
 
+function findEntry(id:uid, entries:Entry[]): [Entry, number]|null {
+    for (let i = 0; i < entries.length; i++) {
+        if (entries[i].id == id) {
+            return [entries[i], i]
+        }
+    }
+    return null
+}
+
+//TODO: need to refactor this to do the sort + filter in the calendar construction, and to rerun when entries changes
+//Then at this stage I want to get the indices from the startentry and endEntry?
+//Might actually be indices by the time it gets here, computing them at the same time that I do filtering and sorting
 function zoomedPopup(
-    entries:Entry[],
-    startIndex:number,
-    endIndex:number,
+    entries:Entry[], //Sorted and filtered
+    startEntry:uid,
+    endEntry:uid,
     profile:Profile,
-    popup: (start:number, end:number) => void,
+    popup: (start:uid, end:uid) => void,
     callback:(t:TimeUpdate) => void
 ): void {
-    const start:Entry = entries[startIndex]
-    const end:Entry = entries[endIndex]
+    let result = findEntry(startEntry, entries)
+    if (result == null) return
+    const [start, startIndex] = result
+    result = findEntry(endEntry, entries)
+    if (result == null) return
+    const [end, endIndex] = result
     $('#popup').attr('active', 'true')
     $('#minical').empty()
     $('#priorcal').empty()
@@ -56,14 +72,14 @@ function zoomedPopup(
             const label = labelFrom(entries[startIndex-1], entries[startIndex])
             const style = `background:${renderGradient(getColor(label, profile), true)}; height:100%`
             const e = $(`<div class='event' style='${style}'><div class='spantext'></div></div>`)
-            e.click(() => popup(startIndex-1, startIndex))
+            e.click(() => popup(entries[startIndex-1].id, entries[startIndex].id))
             $('#priorcal').append(e)
         }
         if (b == null && endIndex + 1 < entries.length) {
             const label = labelFrom(entries[endIndex], entries[endIndex+1])
             const style = `background:${renderGradient(getColor(label, profile), false)}; height:100%`
             const e = $(`<div class='event' style='${style}'><div class='spantext'></div></div>`)
-            e.click(() => popup(endIndex, endIndex+1))
+            e.click(() => popup(entries[endIndex].id, entries[endIndex+1].id))
             $('#nextcal').append(e)
         }
         if (a!= null && b!=null) {
@@ -75,7 +91,7 @@ function zoomedPopup(
                 start.time, end.time,
                 profile
             )
-            elem.click(() => popup(i, j))
+            elem.click(() => popup(first.id, second.id))
             $('#minical').append(elem)
         }
     }
@@ -222,15 +238,25 @@ function parseTime(s:string, anchor:Date, rel:'next'|'previous'|'closest'): Date
     return specToDate(m[0], anchor, rel)
 }
 
+function applyAndSave(entries:Entry[], update:TimeUpdate, credentials:Credentials) {
+    const updates:Entry[] = [];
+    applyUpdate(update, entries, updates)
+    saveEntries(entries)
+    sendUpdates(updates, credentials)
+}
+
 export async function loadTracker(): Promise<void> {
     const credentials:Credentials = await getCredentials()
     const profile:Profile = loadProfile()
-    let entries:Entry[] = loadEntries()
+    let entries:Entry[] = await loadEntries(credentials)
+    if (entries.length == 0) {
+        entries.push(makeNewEntry(now(), undefined, undefined))
+        saveEntries(entries)
+    }
     sortEntries(entries)
     let focused:Entry|null = null;
     function callback(update:TimeUpdate) {
-        [entries, []] = applyUpdate(update, entries, [])
-        saveEntries(entries)
+        applyAndSave(entries, update, credentials)
         render()
     }
     function startInput(elem:JQE, start:Entry, end:Entry|null): void {
@@ -398,8 +424,10 @@ function emptyProfile(): Profile {
     return {colors: new Map()}
 }
 
-export function loadChart() {
-    renderChart(loadEntries(), loadProfile())
+export async function loadChart() {
+    const credentials = await getCredentials()
+    const entries = await loadEntries(credentials)
+    renderChart(entries, loadProfile())
 }
 
 function renderChart(entries:Entry[], profile:Profile){
@@ -556,8 +584,9 @@ function renderBars(entries:Entry[], buckets:Bucket[], profile:Profile) {
     chart.render()
 }
 
-export function loadBars() {
-    const entries = loadEntries()
+export async function loadBars() {
+    const credentials = await getCredentials()
+    const entries = await loadEntries(credentials)
     const buckets = weeklyBuckets()
     renderBars(entries, buckets, loadProfile())
 }
@@ -700,10 +729,21 @@ function saveEntries(entries:Entry[]) {
     localStorage.setItem('entries', serializeEntries(entries))
 }
 
-function loadEntries(): Entry[] {
+export function getLocalEntries(): Entry[] {
     const s:string|null = localStorage.getItem('entries')
-    if (s == '' || s == null) return []
-    return deserializeEntries(s)
+    return (s == null) ? [] : deserializeEntries(s)
+}
+
+async function loadEntries(credentials:Credentials): Promise<Entry[]> {   
+    const localEntries = getLocalEntries()
+    const remoteEntries = await getRemoteEntries(credentials)
+    const merge = mergeAndUpdate(localEntries, remoteEntries)
+    console.log(localEntries)
+    console.log(remoteEntries)
+    console.log(merge)
+    sendUpdates(merge.yUpdates, credentials)
+    if (merge.xUpdates.length > 0) saveEntries(merge.merged)
+    return merge.merged
 }
 
 function renderDay(d:Date): string {
@@ -854,20 +894,20 @@ function loadProfile(): Profile {
     return deserializeProfile(s)
 }
 
-export function loadLabels() {
-    const entries = loadEntries()
-    showLabels(entries)
+export async function loadLabels() {
+    const credentials = await getCredentials()
+    const entries = await loadEntries(credentials)
+    showLabels(entries, credentials)
     $('#labels').click(hideLabelPopup)
 }
 
-function showLabels(entries:Entry[]) {
+function showLabels(entries:Entry[], credentials:Credentials) {
     const labels:Label[] = getDistinctLabels(entries)
     const profile = loadProfile()
     labels.sort()
     function callback(update:TimeUpdate) {
-        entries = applyUpdate(update, entries, [])[0]
-        showLabels(entries)
-        saveEntries(entries)
+        applyAndSave(entries, update, credentials)
+        showLabels(entries, credentials)
     }
     function makeLabelDiv(label:Label): JQE {
         const colorHex = colorToHex(getColor(label, profile))
@@ -893,25 +933,30 @@ function showLabels(entries:Entry[]) {
     }
 }
 
-export function loadCalendar() {
+export async function loadCalendar() {
     $('#calendardiv').click((e) => {
         hideCalPopup()
     })
-    let entries = loadEntries()
+    const credentials = await getCredentials()
+    let entries = await loadEntries(credentials)
     sortEntries(entries)
-    function callback(t:TimeUpdate, indices:Indices): [Entry[], Indices] {
-        [entries, indices] = applyUpdate(t, entries, indices)
-        saveEntries(entries)
-        return [entries, indices]
+    function callback(update:TimeUpdate) {
+        applyAndSave(entries, update, credentials)
     }
     showCalendar(entries, null, loadProfile(), callback)
 }
 
+function sortAndFilter(entries:Entry[]): Entry[] {
+    const result:Entry[] = entries.filter(entry => !entry.deleted)
+    result.sort((x, y) => x.time.getTime() - y.time.getTime())
+    return result
+}
+
 function showCalendar(
     entries:Entry[],
-    initialPopup: [number, number]|null,
+    initialPopup: [uid, uid]|null,
     profile:Profile,
-    callback: (t:TimeUpdate, indices:Indices) => [Entry[], Indices]
+    callback: (t:TimeUpdate) => void,
 ): void {
     const days:CalendarDay[] = []
     for (let i = 0; i < 7; i++) {
@@ -921,28 +966,25 @@ function showCalendar(
     }
     //Called from within a popup when an edit occurs
     //(So needs to redraw the popup)
-    function popupCallback(startIndex:number|null, endIndex:number|null) {
+    function popupCallback(bounds:[uid,uid]|null) {
         function f(t:TimeUpdate) {
-            [entries, [startIndex, endIndex]] = callback(t, [startIndex, endIndex])
-            const initialPopup:null|[number, number] = 
-                (startIndex == null || endIndex == null) ? null
-                : [startIndex, endIndex]
-            showCalendar(entries, initialPopup, profile, callback)
+            callback(t)
+            showCalendar(sortAndFilter(entries), bounds, profile, callback)
         }
         return f
     }
-    function popup(startIndex:number, endIndex:number) {
+    function popup(startEntry:uid, endEntry:uid) {
         zoomedPopup(
-            entries, startIndex, endIndex,
+            sortAndFilter(entries), startEntry, endEntry,
             profile,
             popup,
-            popupCallback(startIndex, endIndex)
+            popupCallback([startEntry, endEntry])
         )
     }
     for (const day of days) {
         getCalendarColumn(day.index).empty()
     }
-    for (const [[i, start], [j, end]] of listPairs(enumerate(it(entries)))) {
+    for (const [start, end] of listPairs(it(sortAndFilter(entries)))) {
         for (const day of days) {
             const range = partInDay(start.time, end.time, day)
             if (range !== null) {
@@ -952,7 +994,7 @@ function showCalendar(
                     profile
                 )
                 e.click((e) => {
-                    popup(i, j)
+                    popup(start.id, end.id)
                     e.stopPropagation()
                 })
                 getCalendarColumn(day.index).append(e)
@@ -1170,76 +1212,55 @@ function insertAt<T>(toInsert:T, xs:T[], index:number): T[] {
     return xs.slice(0, index).concat([toInsert]).concat(xs.slice(index))
 }
 
-function applyTo<T extends IDed>(f:(x:T) => T, xs:T[], x:T): T[] {
-    return xs.map(y => (x.id == y.id) ? f(y) : y)
-}
-
-function remove<T extends IDed>(x:T, xs:T[]): T[] {
-    return xs.filter(y => y.id != x.id)
-}
-
-function insertBetween<T extends IDed>(x:T, xs:T[], a:T, b:T):T[] {
-    for (let i = 0; i < xs.length-1; i++) {
-        if (xs[i].id == a.id && xs[i+1].id == b.id) {
-            return insertAt(x, xs, i+1)
+function neighbors(entries:Entry[], entry:Entry): [Entry|null, Entry|null] {
+    let before:Entry|null = null
+    let after:Entry|null = null
+    for (const x of entries) {
+        if (x.time < entry.time) {
+            if (before == null || before.time < x.time) {
+                before = x
+            }
+        } else if (x.time > entry.time) {
+            if (after == null || after.time > x.time) {
+                after = x
+            }
         }
     }
-    return xs
+    return [before, after]
 }
 
-function removeIndex<T>(xs:T[], n:number): T[] {
-    return xs.slice(0, n).concat(xs.slice(n+1))
-}
-
-function neighbors<T extends IDed>(xs:T[], x:T): [T|null, T|null] {
-    for (let i = 0; i < xs.length; i++) {
-        if (xs[i].id == x.id) {
-            return [
-                (i == 0) ? null : xs[i-1],
-                (i == xs.length-1) ? null : xs[i+1]
-            ]
+//TODO: want to have a different data structure for tracking entries
+function upsertInPlace(entry:Entry, entries:Entry[]): void {
+    for (let i = 0; i < entries.length; i++) {
+        if (entries[i].id == entry.id) {
+            entries[i] = entry
+            return
         }
     }
-    return [null, null]
+    entries.push(entry)
 }
 
-function find<T extends IDed>(xs:T[], x:T) {
-    for (let i = 0; i < xs.length; i++) {
-        if (xs[i].id == x.id) return i
-    }
-    return null
-}
-
-
-//TODO: I think I want this to be the only place that mutates a span or entry?
-//TODO: I want to somehow block the user from moving time past another entry
-//(But at any rate I'll need to figure out how to resolve such conflicts in the DB...)
+//Mutates entries in place
+//Also updates in place
 function applyUpdate(
     update:TimeUpdate,
     entries:Entry[],
-    indices:Indices,
-): [Entry[], Indices] {
+    updates:Entry[],
+) {
+    function upsert(entry:Entry) {
+        const newEntry = {...entry, lastModified:now()}
+        upsertInPlace(newEntry, entries)
+        upsertInPlace(newEntry, updates)
+    }
     switch (update.kind) {
         case 'composite':
             for (const u of update.updates) {
-                [entries, indices] = applyUpdate(u, entries, indices)
+                applyUpdate(u, entries, updates)
             }
             break
         case 'relabel':
-            if (update.before !== undefined) {
-                entries = applyTo(
-                    entry => ({...entry, after: update.label, lastModified: now()}),
-                    entries,
-                    update.before
-                )
-            }
-            if (update.after !== undefined) {
-                entries = applyTo(
-                    entry => ({...entry, before: update.label, lastModified: now()}),
-                    entries,
-                    update.after
-                )
-            }
+            if (update.before !== undefined) upsert({...update.before, after: update.label})
+            if (update.after !== undefined) upsert({...update.after, before: update.label})
             break
         case 'split': 
             const newEntry:Entry = makeNewEntry(
@@ -1247,64 +1268,50 @@ function applyUpdate(
                 update.labelBefore || update.before.after || update.after.before,
                 update.labelAfter || update.after.before || update.before.after,
             )
-            const index = find(entries, update.before)
-            if (index != null) {
-                entries = insertAt(newEntry, entries, index+1)
-                indices = indices.map(x => (x == null) ? null : (x > index) ? x+1 : x)
-            }
+            upsert(newEntry)
             if (update.labelBefore !== undefined) {
-                entries = applyTo(entry => ({...entry, after: update.labelBefore, lastModified: now()}), entries, update.before)
+                upsert({...update.before, after: update.labelBefore})
             } if (update.labelAfter !== undefined) {
-                entries = applyTo(entry => ({...entry, before: update.labelAfter, lastModified: now()}), entries, update.after)
+                upsert({...update.after, before: update.labelAfter})
             }
             break
         case 'merge': {
             const [a, b] = neighbors(entries, update.entry)
-            if (a != null) a.after = update.label
-            if (b != null) b.before = update.label
-            const index = find(entries, update.entry)
-            if (index != null) {
-                entries = removeIndex(entries, index)
-                indices = indices.map(x => (x == null || x == index) ? null : (x > index) ? x - 1 : x)
-            }
+            if (a != null) upsert({...a, after: update.label})
+            if (b != null) upsert({...b, before: update.label})
+            upsert({...update.entry, deleted: true})
             break
         }
         case 'move':
-            entries = applyTo(
-                entry => ({...entry, time: update.time, lastModified: now()}),
-                entries,
-                update.entry
-            )
+            upsert({...update.entry, time: update.time})
             break
         case 'append': {
             const newEntry:Entry = makeNewEntry(update.time, update.before, update.after)
-            entries = entries.concat([newEntry])
+            upsert(newEntry)
             break
         }
         case 'spliceSplit': {
             const newEntry:Entry = makeNewEntry(update.time, update.before.after, update.label)
-            entries = applyTo(
-                entry => ({...entry, after: update.label, lastModified: now()}),
-                entries,
-                update.before
-            )
-            const index = find(entries, update.before)
-            if (index != null) {
-                entries = insertAt(newEntry, entries, index+1)
-                indices = indices.map(x => (x == null) ? null : (x > index) ? x+1 : x)
-            }
+            upsert(newEntry)
+            upsert({...update.before, after: update.label})
             break
         }
         case 'bulkRename':
-            entries = entries.map(entry => ({...entry,
-                before: remapLabel(entry.before, update.from, update.to),
-                after: remapLabel(entry.after, update.from, update.to),
-                lastModified: now() // TODO don't change lastModified except on the entries that actually were
-            }))
+            for (const entry of entries) {
+                if (matchesLabelRemap(entry.before, update.from)) {
+                    upsert({...entry, before: remapLabel(entry.before, update.from, update.to)})
+                }
+                if (matchesLabelRemap(entry.after, update.from)) {
+                    upsert({...entry, after: remapLabel(entry.after, update.from, update.to)})
+                }
+            }    
             break
         default: assertNever(update)
     }
-    return [entries, indices]
+}
+
+function matchesLabelRemap(label:Label|undefined, from:Label) {
+    return (label != undefined && label.slice(0, from.length) == from)
 }
 
 function remapLabel(label:Label|undefined, from:Label, to:Label): Label|undefined {
@@ -1427,17 +1434,12 @@ function makeCredentials(username:string, password:string): Credentials {
 }
 
 function loginLocal(credentials:Credentials): void {
-	localStorage.setItem('campaignUsername', credentials.username)
+	localStorage.setItem('username', credentials.username)
 	localStorage.setItem('hashedPassword', credentials.hashedPassword)
 }
 
-function logout() {
-	delete localStorage.campaignUsername
-	delete localStorage.hashedPassword
-}
-
 export function getLocalCredentials(): Credentials|null {
-	const username = localStorage.campaignUsername
+	const username = localStorage.username
 	const hashedPassword = localStorage.hashedPassword
 	if (username !== undefined && hashedPassword !== undefined) {
 		return {
@@ -1480,7 +1482,7 @@ function signupRemote(credentials:Credentials): Promise<boolean> {
 
 async function getCredentials(): Promise<Credentials> {
     const cred = getLocalCredentials()
-    if (cred !== null) cred
+    if (cred !== null) return cred
     return displayLogin()
 }
 
@@ -1562,7 +1564,7 @@ function hash(s:string):number{
 
 //Gives the merged list of updates, as well as updates that you'd have to apply to either side
 //to bring it up to merged
-function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdates: Entry[], yUpdates:Entry[]} {
+export function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdates: Entry[], yUpdates:Entry[]} {
     function makeMap(entries:Entry[]): Map<uid,Entry> {
         const result = new Map()
         for (const entry of entries) {
@@ -1577,14 +1579,17 @@ function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdates: Ent
     const yUpdates:Entry[] = [];
     for (const entry of xs) {
         const other = yMap.get(entry.id)
-        if (other == undefined || other.lastModified < entry.lastModified) {
+        if (other == undefined || other.lastModified.getTime() < entry.lastModified.getTime()) {
             yUpdates.push(entry)
+            merged.push(entry)
+        }
+        if (other !== undefined && other.lastModified.getTime() == entry.lastModified.getTime()) {
             merged.push(entry)
         }
     }
     for (const entry of ys) {
         const other = xMap.get(entry.id)
-        if (other == undefined || other.lastModified < entry.lastModified) {
+        if (other == undefined || other.lastModified.getTime() < entry.lastModified.getTime()) {
             xUpdates.push(entry)
             merged.push(entry)
         }
@@ -1594,10 +1599,10 @@ function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdates: Ent
 
 function sendUpdates(updates:Entry[], credentials:Credentials) {
     const s = serializeEntries(updates)
-    $.post(`update?entries=${s}&${credentialParams(credentials)}`)
+    $.post(`update?${credentialParams(credentials)}`, `entries=${s}`)
 }
 
-async function getEntries(credentials:Credentials): Promise<Entry[]> {
+async function getRemoteEntries(credentials:Credentials): Promise<Entry[]> {
     return new Promise(function(resolve, reject) {
         $.get(`entries?${credentialParams(credentials)}`, s => resolve(deserializeEntries(s)))
     }) 

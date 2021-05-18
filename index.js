@@ -50,6 +50,7 @@ var __values = (this && this.__values) || function(o) {
     throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
 };
 import express from 'express';
+import bodyParser from 'body-parser';
 var PORT = process.env.PORT || 5000;
 import { serializeEntries, deserializeEntries } from './public/entries.js';
 import postgres from 'postgres';
@@ -83,7 +84,7 @@ function updateEntry(credentials, entry) {
     return __awaiter(this, void 0, void 0, function () {
         return __generator(this, function (_a) {
             switch (_a.label) {
-                case 0: return [4 /*yield*/, sql(templateObject_3 || (templateObject_3 = __makeTemplateObject(["INSERT INTO entries (username, time, before, after, lastModified, id, deleted\n        VALUES (\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", "\n        )\n        ON CONFLICT(uniqueness) DO UPDATE SET\n            before = EXCLUDED.before,\n            after = EXCLUDED.after,\n            time = EXCLUDED.time,\n            lastModified = EXCLUDED.lastModified,\n            deleted = EXCLUDED.deleted\n        WHERE\n            lastModified < EXCLUDED.lastModified\n    "], ["INSERT INTO entries (username, time, before, after, lastModified, id, deleted\n        VALUES (\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", "\n        )\n        ON CONFLICT(uniqueness) DO UPDATE SET\n            before = EXCLUDED.before,\n            after = EXCLUDED.after,\n            time = EXCLUDED.time,\n            lastModified = EXCLUDED.lastModified,\n            deleted = EXCLUDED.deleted\n        WHERE\n            lastModified < EXCLUDED.lastModified\n    "])), credentials.username, entry.time, entry.before || null, entry.after || null, entry.lastModified.getTime(), entry.deleted)];
+                case 0: return [4 /*yield*/, sql(templateObject_3 || (templateObject_3 = __makeTemplateObject(["INSERT INTO entries (username, id, time, before, after, lastmodified, deleted)\n        VALUES (\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", "\n        )\n        ON CONFLICT ON CONSTRAINT uniqueness DO UPDATE SET\n            before = EXCLUDED.before,\n            after = EXCLUDED.after,\n            time = EXCLUDED.time,\n            lastmodified = EXCLUDED.lastmodified,\n            deleted = EXCLUDED.deleted\n        WHERE\n            entries.lastmodified < EXCLUDED.lastmodified\n    "], ["INSERT INTO entries (username, id, time, before, after, lastmodified, deleted)\n        VALUES (\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", ",\n            ", "\n        )\n        ON CONFLICT ON CONSTRAINT uniqueness DO UPDATE SET\n            before = EXCLUDED.before,\n            after = EXCLUDED.after,\n            time = EXCLUDED.time,\n            lastmodified = EXCLUDED.lastmodified,\n            deleted = EXCLUDED.deleted\n        WHERE\n            entries.lastmodified < EXCLUDED.lastmodified\n    "])), credentials.username, entry.id, entry.time.getTime(), entry.before || null, entry.after || null, entry.lastModified.getTime(), entry.deleted)];
                 case 1:
                     _a.sent();
                     return [2 /*return*/];
@@ -96,21 +97,24 @@ function getEntries(credentials) {
         var rows;
         return __generator(this, function (_a) {
             switch (_a.label) {
-                case 0: return [4 /*yield*/, sql(templateObject_4 || (templateObject_4 = __makeTemplateObject(["SELECT (time, before, after, lastModified, deleted) from entries WHERE username = ", ""], ["SELECT (time, before, after, lastModified, deleted) from entries WHERE username = ", ""])), credentials.username)];
+                case 0: return [4 /*yield*/, sql(templateObject_4 || (templateObject_4 = __makeTemplateObject(["SELECT id, time, before, after, lastmodified, deleted from entries WHERE username = ", ""], ["SELECT id, time, before, after, lastmodified, deleted from entries WHERE username = ", ""])), credentials.username)];
                 case 1:
                     rows = _a.sent();
                     return [2 /*return*/, rows.map(function (row) { return ({
                             time: new Date(row.time),
                             before: (row.before || undefined),
                             after: (row.after || undefined),
-                            lastModified: new Date(row.lastModified),
+                            lastModified: new Date(row.lastmodified),
                             deleted: row.deleted,
+                            id: row.id,
                         }); })];
             }
         });
     });
 }
-express()
+var app = express();
+app.use(bodyParser.urlencoded({ extended: false }));
+app
     .get('/test', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
     return __generator(this, function (_a) {
         res.send('Hello, world!');
@@ -197,7 +201,7 @@ express()
             case 2:
                 success = _b.sent();
                 if (success) {
-                    entries = deserializeEntries(req.query.entries);
+                    entries = deserializeEntries(req.body.entries);
                     try {
                         for (entries_1 = __values(entries), entries_1_1 = entries_1.next(); !entries_1_1.done; entries_1_1 = entries_1.next()) {
                             entry = entries_1_1.value;
@@ -225,7 +229,7 @@ express()
     });
 }); })
     .get('/entries', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var credentials, success, entries, e_5;
+    var credentials, success, entries, s, e_5;
     return __generator(this, function (_a) {
         switch (_a.label) {
             case 0:
@@ -243,7 +247,10 @@ express()
                 return [4 /*yield*/, getEntries(credentials)];
             case 3:
                 entries = _a.sent();
-                res.send(serializeEntries(entries));
+                console.log(entries);
+                s = serializeEntries(entries);
+                console.log(s);
+                res.send(s);
                 return [3 /*break*/, 5];
             case 4:
                 res.send('username+password not found');

@@ -1,4 +1,6 @@
 import express from 'express'
+import bodyParser from 'body-parser'
+
 const PORT = process.env.PORT || 5000
 
 import {Entry, serializeEntries, deserializeEntries} from './public/entries.js'
@@ -24,38 +26,44 @@ async function userExists(credentials:Credentials): Promise<boolean> {
 }
 
 async function updateEntry(credentials:Credentials, entry:Entry): Promise<void> {
-    await sql`INSERT INTO entries (username, time, before, after, lastModified, id, deleted
+    await sql`INSERT INTO entries (username, id, time, before, after, lastmodified, deleted)
         VALUES (
             ${credentials.username},
-            ${entry.time},
+            ${entry.id},
+            ${entry.time.getTime()},
             ${entry.before || null},
             ${entry.after || null},
             ${entry.lastModified.getTime()},
             ${entry.deleted}
         )
-        ON CONFLICT(uniqueness) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT uniqueness DO UPDATE SET
             before = EXCLUDED.before,
             after = EXCLUDED.after,
             time = EXCLUDED.time,
-            lastModified = EXCLUDED.lastModified,
+            lastmodified = EXCLUDED.lastmodified,
             deleted = EXCLUDED.deleted
         WHERE
-            lastModified < EXCLUDED.lastModified
+            entries.lastmodified < EXCLUDED.lastmodified
     `
 }
 
 async function getEntries(credentials:Credentials): Promise<Entry[]> {
-    const rows = await sql`SELECT (time, before, after, lastModified, deleted) from entries WHERE username = ${credentials.username}`
+    const rows = await sql`SELECT id, time, before, after, lastmodified, deleted from entries WHERE username = ${credentials.username}`
     return rows.map((row:any) => ({
         time: new Date(row.time as number),
         before: (row.before || undefined) as string|undefined,
         after: (row.after || undefined) as string|undefined,
-        lastModified: new Date(row.lastModified as number),
+        lastModified: new Date(row.lastmodified as number),
         deleted: row.deleted as boolean,
+        id: row.id as string,
     }))
 }
 
-express()
+const app = express()
+
+app.use(bodyParser.urlencoded({extended: false}))
+
+app
     .get('/test', async (req: any, res: any) => {
         res.send('Hello, world!')
     })
@@ -103,7 +111,7 @@ express()
         try {
             const success:boolean = await userExists(credentials)
             if (success) {
-                const entries = deserializeEntries(req.query.entries)
+                const entries = deserializeEntries(req.body.entries)
                 for (const entry of entries) {
                     updateEntry(credentials, entry)
                 }
@@ -123,7 +131,10 @@ express()
             const success:boolean = await userExists(credentials)
             if (success) {
                 const entries = await getEntries(credentials)
-                res.send(serializeEntries(entries))
+                console.log(entries)
+                const s = serializeEntries(entries)
+                console.log(s)
+                res.send(s) 
             } else {
                 res.send('username+password not found')
             }
