@@ -5,11 +5,11 @@ CREATE TABLE users (
 
 CREATE TABLE entries (
     username TEXT NOT NULL,
-    time INTEGER NOT NULL,
+    time BIGINT NOT NULL,
     id TEXT,
     before TEXT,
     after TEXT,
-    lastModified INTEGER NOT NULL,
+    lastModified BIGINT NOT NULL,
     deleted BOOLEAN NOT NULL,
     CONSTRAINT uniqueness UNIQUE(username, id)
 );
