@@ -337,7 +337,8 @@ export async function loadTracker(): Promise<void> {
         heartbeats = []
         const elem = $('#inputs')
         elem.html('')
-        for (const [end, start] of listPairsAndEnds(revit(entries))) {
+        const sortedEntries = sortAndFilter(entries)
+        for (const [end, start] of listPairsAndEnds(revit(sortedEntries))) {
             //end = entries[i]
             if (end == null) {
                 const row = $(`<div class='trackertimerow'></div>`)
@@ -1291,7 +1292,7 @@ function applyUpdate(
             break
         }
         case 'spliceSplit': {
-            const newEntry:Entry = makeNewEntry(update.time, update.before.after, update.label)
+            const newEntry:Entry = makeNewEntry(update.time, update.label, update.before.after)
             upsert(newEntry)
             upsert({...update.before, after: update.label})
             break

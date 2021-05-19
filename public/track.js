@@ -420,6 +420,7 @@ export function loadTracker() {
             heartbeats = [];
             var elem = $('#inputs');
             elem.html('');
+            var sortedEntries = sortAndFilter(entries);
             var _loop_2 = function (end, start) {
                 //end = entries[i]
                 if (end == null) {
@@ -503,7 +504,7 @@ export function loadTracker() {
                 }
             };
             try {
-                for (var _b = __values(listPairsAndEnds(revit(entries))), _c = _b.next(); !_c.done; _c = _b.next()) {
+                for (var _b = __values(listPairsAndEnds(revit(sortedEntries))), _c = _b.next(); !_c.done; _c = _b.next()) {
                     var _d = __read(_c.value, 2), end = _d[0], start = _d[1];
                     _loop_2(end, start);
                 }
@@ -1590,7 +1591,7 @@ function applyUpdate(update, entries, updates) {
             break;
         }
         case 'spliceSplit': {
-            var newEntry_2 = makeNewEntry(update.time, update.before.after, update.label);
+            var newEntry_2 = makeNewEntry(update.time, update.label, update.before.after);
             upsert(newEntry_2);
             upsert(__assign(__assign({}, update.before), { after: update.label }));
             break;
