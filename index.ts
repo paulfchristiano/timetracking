@@ -6,7 +6,10 @@ const PORT = process.env.PORT || 5000
 import {Entry, serializeEntries, deserializeEntries} from './public/entries.js'
 
 import postgres from 'postgres'
-const sql = (process.env.DATABASE_URL == undefined) ? null : postgres(process.env.DATABASE_URL)
+const sql = (process.env.DATABASE_URL == undefined) ? null : postgres(
+    process.env.DATABASE_URL,
+    {ssl: {rejectUnauthorized: false}}
+)
 
 export type Credentials = {username: string, hashedPassword: string}
 
@@ -131,9 +134,7 @@ app
             const success:boolean = await userExists(credentials)
             if (success) {
                 const entries = await getEntries(credentials)
-                console.log(entries)
                 const s = serializeEntries(entries)
-                console.log(s)
                 res.send(s) 
             } else {
                 res.send('username+password not found')
