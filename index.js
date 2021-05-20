@@ -54,7 +54,7 @@ import bodyParser from 'body-parser';
 var PORT = process.env.PORT || 5000;
 import { serializeEntries, deserializeEntries } from './public/entries.js';
 import postgres from 'postgres';
-var sql = (process.env.DATABASE_URL == undefined) ? null : postgres(process.env.DATABASE_URL);
+var sql = (process.env.DATABASE_URL == undefined) ? null : postgres(process.env.DATABASE_URL, { ssl: { rejectUnauthorized: false } });
 function signup(credentials) {
     return __awaiter(this, void 0, void 0, function () {
         return __generator(this, function (_a) {
@@ -247,9 +247,7 @@ app
                 return [4 /*yield*/, getEntries(credentials)];
             case 3:
                 entries = _a.sent();
-                console.log(entries);
                 s = serializeEntries(entries);
-                console.log(s);
                 res.send(s);
                 return [3 /*break*/, 5];
             case 4:
