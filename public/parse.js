@@ -156,7 +156,10 @@ export function raw(s, ignoreCaps) {
 export function anyToken(tokens) {
     return { kind: 'token', applies: function (x) { return tokens.indexOf(x.toLowerCase()) >= 0; }, bind: function (x) { return tokens.indexOf(x.toLowerCase()); } };
 }
-var month = anyToken(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Nov', 'Dec']);
+export var month = any([
+    anyToken(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'nov', 'dec']),
+    anyToken(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'november', 'december'])
+]);
 export var number = { kind: 'token', applies: function (x) { return !isNaN(parseInt(x)); }, bind: function (x) { return parseInt(x); } };
 export function seq(rules, f) {
     return { kind: 'sequence', parts: rules, map: f };
@@ -178,10 +181,25 @@ export var duration = any([
     number,
 ]);
 var ampm = { kind: 'either', options: [[raw('am'), function () { return 'am'; }], [raw('pm'), function () { return 'pm'; }]] };
+function today() {
+    var d = new Date();
+    return { month: d.getMonth(), day: d.getDate(), year: d.getFullYear() };
+}
+function yesterday() {
+    var d = new Date();
+    d.setDate(d.getDate() - 1);
+    return { month: d.getMonth(), day: d.getDate(), year: d.getFullYear() };
+}
+export var dayRule = any([
+    seq([month, number], function (x) { return ({ month: x[0], day: x[1] }); }),
+    map(raw('yesterday'), function () { return yesterday(); }),
+    map(raw('today'), function () { return today(); })
+]);
 var ampmTimeRule = any([
     seq([colonTime, ampm], function (xs) { return ({ hours: xs[0][0], minutes: xs[0][1], ampm: xs[1] }); }),
     seq([number, ampm], function (xs) { return ({ hours: xs[0], minutes: 0, ampm: xs[1] }); })
 ]);
+var startOrEnd = any([raw('start'), raw('end')]);
 export var dateRule = any([
     seq([ampmTimeRule, raw(','), month, number], function (x) { return ({
         hours: x[0].hours,
@@ -190,10 +208,32 @@ export var dateRule = any([
         month: x[2],
         day: x[3],
     }); }),
+    seq([ampmTimeRule, month, number], function (x) { return ({
+        hours: x[0].hours,
+        minutes: x[0].minutes,
+        ampm: x[0].ampm,
+        month: x[1],
+        day: x[2],
+    }); }),
     ampmTimeRule,
     seq([colonTime], function (x) { return ({
         hours: x[0][0],
         minutes: x[0][1],
+    }); }),
+    map(raw('now'), function () { return 'now'; }),
+    seq([startOrEnd, dayRule], function (x) { return ({
+        hours: (x[0] == 'start') ? 12 : 11,
+        minutes: (x[0] == 'start') ? 0 : 59,
+        ampm: (x[0] == 'start') ? 'am' : 'pm',
+        month: x[1].month,
+        day: x[1].day
+    }); }),
+    seq([startOrEnd, month], function (x) { return ({
+        hours: 12,
+        minutes: 0,
+        ampm: 'am',
+        month: (x[0] == 'start') ? x[1] : ((x[1] + 1) % 12),
+        day: 1
     }); })
 ]);
 function assertNever(value) {

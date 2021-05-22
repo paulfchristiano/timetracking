@@ -100,7 +100,10 @@ export function anyToken(tokens:string[]): Rule<number> {
     return {kind: 'token', applies: x => tokens.indexOf(x.toLowerCase()) >= 0, bind: x=> tokens.indexOf(x.toLowerCase())}
 }
 
-const month: Rule<number> = anyToken(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Nov', 'Dec'])
+export const month: Rule<number> = any<number>([
+    anyToken(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'nov', 'dec']),
+    anyToken(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'november', 'december'])
+])
 
 export const number: Rule<number> = {kind: 'token', applies: x => !isNaN(parseInt(x)), bind: x => parseInt(x)}
 
@@ -131,7 +134,31 @@ export const duration: Rule<number> = any<number>([
 
 const ampm:Rule<'am'|'pm'> = {kind: 'either', options: [[raw('am'), () => 'am'], [raw('pm'), () => 'pm']]}
 
-export interface DateSpec {
+interface DaySpec {
+    month: number,
+    day: number,
+    year?: number,
+}
+
+function today(): DaySpec {
+    const d = new Date()
+    return {month: d.getMonth(), day: d.getDate(), year: d.getFullYear()}
+}
+
+function yesterday() {
+    const d = new Date()
+    d.setDate(d.getDate() - 1)
+    return {month: d.getMonth(), day: d.getDate(), year: d.getFullYear()}
+}
+
+export const dayRule:Rule<DaySpec> = any<DaySpec>([
+    seq([month, number], x => ({month: x[0], day: x[1]})), 
+    map(raw('yesterday'), ()=>yesterday()),
+    map(raw('today'), () => today())
+])
+
+
+export type DateSpec = 'now' | {
     hours: number,
     minutes: number,
     ampm?: 'am'|'pm',
@@ -144,6 +171,8 @@ const ampmTimeRule:Rule<DateSpec> = any([
     seq([number, ampm], xs => ({hours: xs[0], minutes: 0, ampm: xs[1]}))
 ])
 
+const startOrEnd = any([raw('start'), raw('end')])
+
 export const dateRule:Rule<DateSpec> = any<DateSpec>([
     seq([ampmTimeRule, raw(','), month, number], x => ({
         hours: x[0].hours,
@@ -152,10 +181,32 @@ export const dateRule:Rule<DateSpec> = any<DateSpec>([
         month: (x[2] as number),
         day: (x[3] as number),
     })),
+    seq([ampmTimeRule, month, number], x => ({
+        hours: x[0].hours,
+        minutes: x[0].minutes,
+        ampm: x[0].ampm,
+        month: (x[1] as number),
+        day: (x[2] as number),
+    })),
     ampmTimeRule,
     seq([colonTime], x => ({
         hours: (x[0][0] as number),
         minutes: x[0][1] as number,
+    })),
+    map(raw('now'), () => 'now'),
+    seq([startOrEnd, dayRule], x=>({
+        hours: (x[0] == 'start') ? 12 : 11,
+        minutes: (x[0] == 'start') ? 0 : 59,
+        ampm: (x[0] == 'start') ? 'am' : 'pm',
+        month: x[1].month,
+        day: x[1].day
+    })),
+    seq([startOrEnd, month], x=>({
+        hours: 12,
+        minutes: 0,
+        ampm: 'am',
+        month: (x[0] == 'start') ? x[1] : ((x[1] + 1) % 12),
+        day: 1
     }))
 ])
 

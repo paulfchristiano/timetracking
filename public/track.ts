@@ -180,6 +180,9 @@ function zoomedPopup(
 }
 
 function renderDuration(ms:number): string {
+    if (ms < 0) {
+        return `-${renderDuration(-ms)}`
+    }
     if (ms < 1000) {
         return `${ms}ms`
     }
@@ -206,6 +209,7 @@ function twoDigits(n:number): string {
 }
 
 function specToDate(spec:DateSpec, anchor:Date, rel:'next'|'previous'|'closest'): Date {
+    if (spec == 'now') return now()
     const candidate = new Date(anchor)
     candidate.setMinutes(spec.minutes)
     let best:Date = new Date(anchor);
@@ -739,9 +743,6 @@ async function loadEntries(credentials:Credentials): Promise<Entry[]> {
     const localEntries = getLocalEntries()
     const remoteEntries = await getRemoteEntries(credentials)
     const merge = mergeAndUpdate(localEntries, remoteEntries)
-    console.log(localEntries)
-    console.log(remoteEntries)
-    console.log(merge)
     sendUpdates(merge.yUpdates, credentials)
     if (merge.xUpdates.length > 0) saveEntries(merge.merged)
     return merge.merged
@@ -940,7 +941,6 @@ export async function loadCalendar() {
     })
     const credentials = await getCredentials()
     let entries = await loadEntries(credentials)
-    sortEntries(entries)
     function callback(update:TimeUpdate) {
         applyAndSave(entries, update, credentials)
     }
@@ -953,6 +953,7 @@ function sortAndFilter(entries:Entry[]): Entry[] {
     return result
 }
 
+//TODO less sort and filter...
 function showCalendar(
     entries:Entry[],
     initialPopup: [uid, uid]|null,
@@ -1633,4 +1634,85 @@ async function getRemoteEntries(credentials:Credentials): Promise<Entry[]> {
     return new Promise(function(resolve, reject) {
         $.get(`entries?${credentialParams(credentials)}`, s => resolve(deserializeEntries(s)))
     }) 
+}
+
+// Records the total hours in different categories, and then 
+type Report = {
+    [label: string]: [number, Report]
+}
+
+//Splits on the first slash
+//Second part is empty if no slash
+//If first symbol is '?', whole thing is prefix
+function prefixAndRemainder(s:string): [string, string] {
+    const n = s.indexOf('/')
+    if (n < 0 || s[0] == '?') return [s, '']
+    return [s.slice(0, n), s.slice(n+1)]
+}
+
+function addToReport(label:Label, t:number, r:Report): void {
+    if (label.length == 0) return
+    const [a, b] = prefixAndRemainder(label)
+    let sub = r[a]
+    if (sub == undefined) {
+        const newSub = {}
+        addToReport(b, t, newSub)
+        r[a] = [t, newSub]
+    } else {
+        sub[0] += t
+        addToReport(b, t, sub[1])
+    }
+}
+
+function makeReport(entries:Entry[], start:Date, end:Date): Report {
+    console.log(entries)
+    entries = sortAndFilter(entries)
+    const result:Report = {}
+    for (const [e0, e1] of listPairs(it(entries))) {
+        if (e1.time > start && e0.time < end) {
+            const t0 = last(e0.time, start)
+            const t1 = first(e1.time, end)
+            console.log([t0, t1, labelFrom(e0, e1)])
+            if (t0 != t1) addToReport(labelFrom(e0, e1), t1.getTime() - t0.getTime(), result)
+        }
+    }
+    return result
+}
+
+function reportToString(report:Report): string {
+    const parts = []
+    for (const [label, [time, sub]] of Object.entries(report)) {
+        console.log([label, [time, sub]])
+        parts.push(`${label}:${time}:${reportToString(sub)}`)
+    }
+    return `{${parts.join(',')}}`
+}
+
+function renderReport(report:Report, prefix:string = ''): JQE {
+    const result = $('<ul></ul>')
+    for (const [label, [time, sub]] of Object.entries(report)) {
+        const e = $(`<li>[${renderDuration(time)}] ${label}</li>`)
+        e.append(renderReport(sub, `${prefix}${label}/`))
+        result.append(e)
+    }
+    return result
+}
+
+export async function loadReport() {
+    const credentials = await getCredentials()
+    const entries = await loadEntries(credentials)
+    const profile = loadProfile()
+    $('#generate').click(function() {
+        const startParse = parseString(dateRule, $('#startDate').val() as string)
+        if (startParse == 'fail' || startParse == 'prefix') return
+        const endParse = parseString(dateRule, $('#endDate').val() as string)
+        if (endParse == 'fail' || endParse == 'prefix') return
+        const startDate = startParse[0]
+        const endDate = endParse[0]
+        const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'))
+        console.log(reportToString(report))
+        $('#reportContainer').empty()
+        $('#reportContainer').append(renderReport(report))
+    })
+    $('#generate').click()
 }

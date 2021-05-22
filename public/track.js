@@ -257,6 +257,9 @@ startEntry, endEntry, profile, popup, callback) {
     }));
 }
 function renderDuration(ms) {
+    if (ms < 0) {
+        return "-" + renderDuration(-ms);
+    }
     if (ms < 1000) {
         return ms + "ms";
     }
@@ -283,6 +286,8 @@ function twoDigits(n) {
 }
 function specToDate(spec, anchor, rel) {
     var e_4, _a, e_5, _b;
+    if (spec == 'now')
+        return now();
     var candidate = new Date(anchor);
     candidate.setMinutes(spec.minutes);
     var best = new Date(anchor);
@@ -997,9 +1002,6 @@ function loadEntries(credentials) {
                 case 1:
                     remoteEntries = _a.sent();
                     merge = mergeAndUpdate(localEntries, remoteEntries);
-                    console.log(localEntries);
-                    console.log(remoteEntries);
-                    console.log(merge);
                     sendUpdates(merge.yUpdates, credentials);
                     if (merge.xUpdates.length > 0)
                         saveEntries(merge.merged);
@@ -1240,7 +1242,6 @@ export function loadCalendar() {
                     return [4 /*yield*/, loadEntries(credentials)];
                 case 2:
                     entries = _a.sent();
-                    sortEntries(entries);
                     showCalendar(entries, null, loadProfile(), callback);
                     return [2 /*return*/];
             }
@@ -1252,6 +1253,7 @@ function sortAndFilter(entries) {
     result.sort(function (x, y) { return x.time.getTime() - y.time.getTime(); });
     return result;
 }
+//TODO less sort and filter...
 function showCalendar(entries, initialPopup, profile, callback) {
     var e_23, _a, e_24, _b;
     var days = [];
@@ -2150,6 +2152,128 @@ function getRemoteEntries(credentials) {
             return [2 /*return*/, new Promise(function (resolve, reject) {
                     $.get("entries?" + credentialParams(credentials), function (s) { return resolve(deserializeEntries(s)); });
                 })];
+        });
+    });
+}
+//Splits on the first slash
+//Second part is empty if no slash
+//If first symbol is '?', whole thing is prefix
+function prefixAndRemainder(s) {
+    var n = s.indexOf('/');
+    if (n < 0 || s[0] == '?')
+        return [s, ''];
+    return [s.slice(0, n), s.slice(n + 1)];
+}
+function addToReport(label, t, r) {
+    if (label.length == 0)
+        return;
+    var _a = __read(prefixAndRemainder(label), 2), a = _a[0], b = _a[1];
+    var sub = r[a];
+    if (sub == undefined) {
+        var newSub = {};
+        addToReport(b, t, newSub);
+        r[a] = [t, newSub];
+    }
+    else {
+        sub[0] += t;
+        addToReport(b, t, sub[1]);
+    }
+}
+function makeReport(entries, start, end) {
+    var e_39, _a;
+    console.log(entries);
+    entries = sortAndFilter(entries);
+    var result = {};
+    try {
+        for (var _b = __values(listPairs(it(entries))), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var _d = __read(_c.value, 2), e0 = _d[0], e1 = _d[1];
+            if (e1.time > start && e0.time < end) {
+                var t0 = last(e0.time, start);
+                var t1 = first(e1.time, end);
+                console.log([t0, t1, labelFrom(e0, e1)]);
+                if (t0 != t1)
+                    addToReport(labelFrom(e0, e1), t1.getTime() - t0.getTime(), result);
+            }
+        }
+    }
+    catch (e_39_1) { e_39 = { error: e_39_1 }; }
+    finally {
+        try {
+            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+        }
+        finally { if (e_39) throw e_39.error; }
+    }
+    return result;
+}
+function reportToString(report) {
+    var e_40, _a;
+    var parts = [];
+    try {
+        for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var _d = __read(_c.value, 2), label = _d[0], _e = __read(_d[1], 2), time = _e[0], sub = _e[1];
+            console.log([label, [time, sub]]);
+            parts.push(label + ":" + time + ":" + reportToString(sub));
+        }
+    }
+    catch (e_40_1) { e_40 = { error: e_40_1 }; }
+    finally {
+        try {
+            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+        }
+        finally { if (e_40) throw e_40.error; }
+    }
+    return "{" + parts.join(',') + "}";
+}
+function renderReport(report, prefix) {
+    var e_41, _a;
+    if (prefix === void 0) { prefix = ''; }
+    var result = $('<ul></ul>');
+    try {
+        for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var _d = __read(_c.value, 2), label = _d[0], _e = __read(_d[1], 2), time = _e[0], sub = _e[1];
+            var e_42 = $("<li>[" + renderDuration(time) + "] " + label + "</li>");
+            e_42.append(renderReport(sub, "" + prefix + label + "/"));
+            result.append(e_42);
+        }
+    }
+    catch (e_41_1) { e_41 = { error: e_41_1 }; }
+    finally {
+        try {
+            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+        }
+        finally { if (e_41) throw e_41.error; }
+    }
+    return result;
+}
+export function loadReport() {
+    return __awaiter(this, void 0, void 0, function () {
+        var credentials, entries, profile;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, getCredentials()];
+                case 1:
+                    credentials = _a.sent();
+                    return [4 /*yield*/, loadEntries(credentials)];
+                case 2:
+                    entries = _a.sent();
+                    profile = loadProfile();
+                    $('#generate').click(function () {
+                        var startParse = parseString(dateRule, $('#startDate').val());
+                        if (startParse == 'fail' || startParse == 'prefix')
+                            return;
+                        var endParse = parseString(dateRule, $('#endDate').val());
+                        if (endParse == 'fail' || endParse == 'prefix')
+                            return;
+                        var startDate = startParse[0];
+                        var endDate = endParse[0];
+                        var report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'));
+                        console.log(reportToString(report));
+                        $('#reportContainer').empty();
+                        $('#reportContainer').append(renderReport(report));
+                    });
+                    $('#generate').click();
+                    return [2 /*return*/];
+            }
         });
     });
 }
