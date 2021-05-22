@@ -1958,7 +1958,6 @@ function signupRemote(credentials) {
         else {
             $.post("signup?" + credentialParams(credentials), function (data) {
                 if (data != 'ok') {
-                    console.log(data);
                     resolve(false);
                 }
                 else {
@@ -2179,9 +2178,19 @@ function addToReport(label, t, r) {
         addToReport(b, t, sub[1]);
     }
 }
-function makeReport(entries, start, end) {
+function matchLabel(category, label) {
+    var n = category.length;
+    if (n == 0)
+        return label;
+    else if (label == category)
+        return 'uncategorized';
+    else if (label.slice(0, n + 1) == category + '/')
+        return label.slice(n + 1);
+    else
+        return null;
+}
+function makeReport(entries, start, end, topLabel) {
     var e_39, _a;
-    console.log(entries);
     entries = sortAndFilter(entries);
     var result = {};
     try {
@@ -2190,9 +2199,10 @@ function makeReport(entries, start, end) {
             if (e1.time > start && e0.time < end) {
                 var t0 = last(e0.time, start);
                 var t1 = first(e1.time, end);
-                console.log([t0, t1, labelFrom(e0, e1)]);
-                if (t0 != t1)
-                    addToReport(labelFrom(e0, e1), t1.getTime() - t0.getTime(), result);
+                var label = labelFrom(e0, e1);
+                var subLabel = matchLabel(topLabel, label);
+                if (t0 != t1 && subLabel != null)
+                    addToReport(subLabel, t1.getTime() - t0.getTime(), result);
             }
         }
     }
@@ -2211,7 +2221,6 @@ function reportToString(report) {
     try {
         for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
             var _d = __read(_c.value, 2), label = _d[0], _e = __read(_d[1], 2), time = _e[0], sub = _e[1];
-            console.log([label, [time, sub]]);
             parts.push(label + ":" + time + ":" + reportToString(sub));
         }
     }
@@ -2224,29 +2233,185 @@ function reportToString(report) {
     }
     return "{" + parts.join(',') + "}";
 }
-function renderReport(report, prefix) {
+/*
+function renderReport(report:Report, prefix:string = '', indentation:number=0): JQE {
+    const result = $('<ul></ul>')
+    for (const [label, [time, sub]] of Object.entries(report)) {
+        const e = $(`<li>[${renderDuration(time)}] ${label}</li>`)
+        e.append(renderReport(sub, `${prefix}${label}/`, indentation+1))
+        result.append(e)
+    }
+    return result
+}
+*/
+function len(x) {
+    return Object.keys(x).length;
+}
+// Compress paths (with no branches) into single steps
+export function flattenReport(report) {
     var e_41, _a;
-    if (prefix === void 0) { prefix = ''; }
-    var result = $('<ul></ul>');
+    var entries = Object.entries(report);
+    var result = {};
     try {
-        for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
-            var _d = __read(_c.value, 2), label = _d[0], _e = __read(_d[1], 2), time = _e[0], sub = _e[1];
-            var e_42 = $("<li>[" + renderDuration(time) + "] " + label + "</li>");
-            e_42.append(renderReport(sub, "" + prefix + label + "/"));
-            result.append(e_42);
+        for (var entries_5 = __values(entries), entries_5_1 = entries_5.next(); !entries_5_1.done; entries_5_1 = entries_5.next()) {
+            var _b = __read(entries_5_1.value, 2), label = _b[0], _c = __read(_b[1], 2), time = _c[0], sub = _c[1];
+            var flatSub = flattenReport(sub);
+            var subEntries = Object.entries(flatSub);
+            if (subEntries.length == 1) {
+                result[label + "/" + subEntries[0][0]] = subEntries[0][1];
+            }
+            else {
+                result[label] = [time, flatSub];
+            }
         }
     }
     catch (e_41_1) { e_41 = { error: e_41_1 }; }
     finally {
         try {
-            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+            if (entries_5_1 && !entries_5_1.done && (_a = entries_5.return)) _a.call(entries_5);
         }
         finally { if (e_41) throw e_41.error; }
     }
     return result;
 }
+function totalReportTime(report) {
+    var e_42, _a;
+    var result = 0;
+    try {
+        for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var _d = __read(_c.value, 2), label = _d[0], _e = __read(_d[1], 2), time = _e[0], sub = _e[1];
+            result += time;
+        }
+    }
+    catch (e_42_1) { e_42 = { error: e_42_1 }; }
+    finally {
+        try {
+            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+        }
+        finally { if (e_42) throw e_42.error; }
+    }
+    return result;
+}
+function renderPercentage(x) {
+    return Math.round(x * 100) + "%";
+}
+function renderReportLine(label, time, fraction, hasChildren) {
+    var childString = (hasChildren) ? ' (+)' : '';
+    var childClass = (hasChildren) ? ' clickable' : '';
+    return $("<div class='ReportLine" + childClass + "'>[" + renderDuration(time) + "] " + label + childString + "</div>");
+    //return $(`<div class="reportLine"><span>${label}</span><span>${renderDuration(time)}</span><span>${renderPercentage(fraction)}</span></div>`)
+}
+function renderReport(report, prefix, indentation, total) {
+    var e_43, _a, e_44, _b;
+    if (prefix === void 0) { prefix = ''; }
+    if (indentation === void 0) { indentation = 0; }
+    if (total === void 0) { total = null; }
+    var totalNotNull = (total === null) ? totalReportTime(report) : total;
+    var result = $('<div class="indent"></div>');
+    function renderLineAndChildren(label, time, sub) {
+        var hasChildren = Object.keys(sub).length > 0;
+        var head = renderReportLine(label, time, time / totalNotNull, hasChildren);
+        var result = [head];
+        if (hasChildren) {
+            var child_1 = renderReport(sub, "" + prefix + label + "/", indentation + 1);
+            var visible_1 = false;
+            head.click(function () {
+                console.log(visible_1);
+                if (visible_1) {
+                    visible_1 = false;
+                    child_1.hide();
+                }
+                else {
+                    visible_1 = true;
+                    child_1.show();
+                }
+            });
+            child_1.hide();
+            result.push(child_1);
+        }
+        return result;
+    }
+    var entries = Object.entries(report);
+    entries.sort(function (x, y) { return y[1][0] - x[1][0]; });
+    try {
+        for (var entries_6 = __values(entries), entries_6_1 = entries_6.next(); !entries_6_1.done; entries_6_1 = entries_6.next()) {
+            var _c = __read(entries_6_1.value, 2), label = _c[0], _d = __read(_c[1], 2), time = _d[0], sub = _d[1];
+            try {
+                for (var _e = (e_44 = void 0, __values(renderLineAndChildren(label, time, sub))), _f = _e.next(); !_f.done; _f = _e.next()) {
+                    var e_45 = _f.value;
+                    result.append(e_45);
+                }
+            }
+            catch (e_44_1) { e_44 = { error: e_44_1 }; }
+            finally {
+                try {
+                    if (_f && !_f.done && (_b = _e.return)) _b.call(_e);
+                }
+                finally { if (e_44) throw e_44.error; }
+            }
+        }
+    }
+    catch (e_43_1) { e_43 = { error: e_43_1 }; }
+    finally {
+        try {
+            if (entries_6_1 && !entries_6_1.done && (_a = entries_6.return)) _a.call(entries_6);
+        }
+        finally { if (e_43) throw e_43.error; }
+    }
+    return result;
+}
 export function loadReport() {
     return __awaiter(this, void 0, void 0, function () {
+        function paramsFromInput() {
+            return {
+                start: $('#startDate').val(),
+                end: $('#endDate').val(),
+                label: $('#topLabel').val(),
+            };
+        }
+        function paramsFromURL(url) {
+            var params = new URLSearchParams(url.split('?')[1]);
+            return {
+                start: params.get('start') || undefined,
+                end: params.get('end') || undefined,
+                label: params.get('label') || undefined,
+            };
+        }
+        function renderParams(params) {
+            var parts = [];
+            if (params.start !== undefined)
+                parts.push("start=" + params.start);
+            if (params.end !== undefined)
+                parts.push("end=" + params.end);
+            if (params.label !== undefined)
+                parts.push("label=" + params.label);
+            return parts.join('&');
+        }
+        function kd(e) {
+            if (e.keyCode == 13) {
+                e.preventDefault();
+                render(paramsFromInput());
+            }
+        }
+        function render(params) {
+            var startParse = parseString(dateRule, params.start || 'start today');
+            var endParse = parseString(dateRule, params.end || 'now');
+            var label = params.label || '';
+            if (startParse == 'fail' || startParse == 'prefix')
+                return;
+            if (endParse == 'fail' || endParse == 'prefix')
+                return;
+            var startDate = startParse[0];
+            var endDate = endParse[0];
+            window.history.pushState(null, "", "report.html?" + renderParams(params));
+            $('#startDate').val(params.start || '');
+            $('#endDate').val(params.end || '');
+            $('#topLabel').val(params.label || '');
+            var report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), label);
+            $('#reportContainer').empty();
+            //debugger;
+            $('#reportContainer').append(renderReport(flattenReport(report)));
+        }
         var credentials, entries, profile;
         return __generator(this, function (_a) {
             switch (_a.label) {
@@ -2257,21 +2422,14 @@ export function loadReport() {
                 case 2:
                     entries = _a.sent();
                     profile = loadProfile();
-                    $('#generate').click(function () {
-                        var startParse = parseString(dateRule, $('#startDate').val());
-                        if (startParse == 'fail' || startParse == 'prefix')
-                            return;
-                        var endParse = parseString(dateRule, $('#endDate').val());
-                        if (endParse == 'fail' || endParse == 'prefix')
-                            return;
-                        var startDate = startParse[0];
-                        var endDate = endParse[0];
-                        var report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'));
-                        console.log(reportToString(report));
-                        $('#reportContainer').empty();
-                        $('#reportContainer').append(renderReport(report));
+                    $('.reportParamInput').keydown(kd);
+                    window.addEventListener('popstate', function (event) {
+                        render(paramsFromURL(window.location.href));
                     });
-                    $('#generate').click();
+                    $('#generate').click(function () { return render(paramsFromInput()); });
+                    $('#startDate').val('start today');
+                    $('#endDate').val('now');
+                    render(paramsFromURL(window.location.href));
                     return [2 /*return*/];
             }
         });

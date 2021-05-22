@@ -1498,7 +1498,6 @@ function signupRemote(credentials:Credentials): Promise<boolean> {
 		} else {
 			$.post(`signup?${credentialParams(credentials)}`, function(data) {
 				if (data != 'ok') { 
-                    console.log(data)
 					resolve(false)
 				} else {
 					resolve(true)
@@ -1664,16 +1663,24 @@ function addToReport(label:Label, t:number, r:Report): void {
     }
 }
 
-function makeReport(entries:Entry[], start:Date, end:Date): Report {
-    console.log(entries)
+function matchLabel(category:Label, label:Label): string|null {
+    const n = category.length
+    if (n == 0) return label
+    else if (label == category) return 'uncategorized'
+    else if (label.slice(0, n+1) == category + '/') return label.slice(n+1)
+    else return null
+}
+
+function makeReport(entries:Entry[], start:Date, end:Date, topLabel:Label): Report {
     entries = sortAndFilter(entries)
     const result:Report = {}
     for (const [e0, e1] of listPairs(it(entries))) {
         if (e1.time > start && e0.time < end) {
             const t0 = last(e0.time, start)
             const t1 = first(e1.time, end)
-            console.log([t0, t1, labelFrom(e0, e1)])
-            if (t0 != t1) addToReport(labelFrom(e0, e1), t1.getTime() - t0.getTime(), result)
+            const label = labelFrom(e0, e1)
+            const subLabel:string|null = matchLabel(topLabel, label)
+            if (t0 != t1 && subLabel != null) addToReport(subLabel, t1.getTime() - t0.getTime(), result)
         }
     }
     return result
@@ -1682,37 +1689,160 @@ function makeReport(entries:Entry[], start:Date, end:Date): Report {
 function reportToString(report:Report): string {
     const parts = []
     for (const [label, [time, sub]] of Object.entries(report)) {
-        console.log([label, [time, sub]])
         parts.push(`${label}:${time}:${reportToString(sub)}`)
     }
     return `{${parts.join(',')}}`
 }
 
-function renderReport(report:Report, prefix:string = ''): JQE {
+/*
+function renderReport(report:Report, prefix:string = '', indentation:number=0): JQE {
     const result = $('<ul></ul>')
     for (const [label, [time, sub]] of Object.entries(report)) {
         const e = $(`<li>[${renderDuration(time)}] ${label}</li>`)
-        e.append(renderReport(sub, `${prefix}${label}/`))
+        e.append(renderReport(sub, `${prefix}${label}/`, indentation+1))
         result.append(e)
     }
     return result
+}
+*/
+
+function len(x:Report): number {
+    return Object.keys(x).length
+}
+
+// Compress paths (with no branches) into single steps
+export function flattenReport(report:Report): Report {
+    const entries = Object.entries(report)
+    const result:Report = {}
+    for (const [label, [time, sub]] of entries) {
+        const flatSub = flattenReport(sub)
+        const subEntries = Object.entries(flatSub);
+        if (subEntries.length == 1) {
+            result[`${label}/${subEntries[0][0]}`] = subEntries[0][1]
+        } else {
+            result[label] = [time, flatSub] 
+        }
+    }
+    return result
+}
+
+function totalReportTime(report:Report): number {
+    let result:number = 0
+    for (const [label, [time, sub]] of Object.entries(report)) {
+        result += time
+    }
+    return result
+}
+
+function renderPercentage(x:number): string {
+    return `${Math.round(x * 100)}%`
+}
+
+function renderReportLine(label:Label, time:number, fraction:number, hasChildren:boolean): JQE {
+    const childString = (hasChildren) ? ' (+)' : ''
+    const childClass = (hasChildren) ? ' clickable' : ''
+    return $(`<div class='ReportLine${childClass}'>[${renderDuration(time)}] ${label}${childString}</div>`)
+    //return $(`<div class="reportLine"><span>${label}</span><span>${renderDuration(time)}</span><span>${renderPercentage(fraction)}</span></div>`)
+}
+
+function renderReport(report:Report, prefix:string = '', indentation:number=0, total:number|null = null): JQE {
+    const totalNotNull = (total === null) ? totalReportTime(report) : total 
+    const result = $('<div class="indent"></div>')
+    function renderLineAndChildren(label:Label, time:number, sub:Report): JQE[] {
+        const hasChildren = Object.keys(sub).length > 0
+        const head = renderReportLine(label, time, time / totalNotNull, hasChildren)
+        const result = [head]
+        if (hasChildren) {
+            const child = renderReport(sub, `${prefix}${label}/`, indentation+1)
+            let visible:boolean = false
+            head.click(function() {
+                console.log(visible)
+                if (visible) {
+                    visible = false;
+                    child.hide();
+                } else {
+                    visible = true;
+                    child.show();
+                }
+            })
+            child.hide()
+            result.push(child)
+        }
+        return result
+    }
+    const entries = Object.entries(report)
+    entries.sort((x, y) => y[1][0] - x[1][0])
+    for (const [label, [time, sub]] of entries) {
+        for (const e of renderLineAndChildren(label, time, sub)) {
+            result.append(e)
+        }
+    }
+    return result
+}
+
+interface ReportParams {
+    start?: string,
+    end?: string,
+    label?: Label
 }
 
 export async function loadReport() {
     const credentials = await getCredentials()
     const entries = await loadEntries(credentials)
     const profile = loadProfile()
-    $('#generate').click(function() {
-        const startParse = parseString(dateRule, $('#startDate').val() as string)
+    function paramsFromInput(): ReportParams {
+        return {
+            start: $('#startDate').val() as string|undefined,
+            end: $('#endDate').val() as string|undefined,
+            label: $('#topLabel').val() as string|undefined,
+        }
+    }
+    function paramsFromURL(url:string): ReportParams {
+        const params = new URLSearchParams(url.split('?')[1])
+        return {
+            start: params.get('start') || undefined,
+            end: params.get('end') || undefined,
+            label: params.get('label') || undefined,
+        }
+    }
+    function renderParams(params:ReportParams): string {
+        const parts:string[] = []
+        if (params.start !== undefined) parts.push(`start=${params.start}`)
+        if (params.end !== undefined) parts.push(`end=${params.end}`)
+        if (params.label !== undefined) parts.push(`label=${params.label}`)
+        return parts.join('&')
+    }
+
+    function kd(e:any) {
+        if (e.keyCode == 13) {
+            e.preventDefault()
+            render(paramsFromInput())
+        }
+    }
+    $('.reportParamInput').keydown(kd)
+
+    function render(params: ReportParams) {
+        const startParse = parseString(dateRule, params.start || 'start today')
+        const endParse = parseString(dateRule, params.end || 'now')
+        const label = params.label || ''
         if (startParse == 'fail' || startParse == 'prefix') return
-        const endParse = parseString(dateRule, $('#endDate').val() as string)
         if (endParse == 'fail' || endParse == 'prefix') return
         const startDate = startParse[0]
         const endDate = endParse[0]
-        const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'))
-        console.log(reportToString(report))
+        window.history.pushState(null, "", `report.html?${renderParams(params)}`)
+        $('#startDate').val(params.start || '')
+        $('#endDate').val(params.end || '')
+        $('#topLabel').val(params.label || '')
+        const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), label)
         $('#reportContainer').empty()
-        $('#reportContainer').append(renderReport(report))
-    })
-    $('#generate').click()
+        //debugger;
+        $('#reportContainer').append(renderReport(flattenReport(report)))
+    }
+    window.addEventListener('popstate', function (event) {
+        render(paramsFromURL(window.location.href))
+    });
+    $('#generate').click(() => render(paramsFromInput()))
+    $('#startDate').val('start today')
+    $('#endDate').val('now')
+    render(paramsFromURL(window.location.href))
 }

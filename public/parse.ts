@@ -105,6 +105,11 @@ export const month: Rule<number> = any<number>([
     anyToken(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'november', 'december'])
 ])
 
+export const dayName: Rule<number> = any<number>([
+    anyToken(['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
+    anyToken(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']),
+])
+
 export const number: Rule<number> = {kind: 'token', applies: x => !isNaN(parseInt(x)), bind: x => parseInt(x)}
 
 export function seq<T>(rules:Rule<any>[], f: (xs:any[]) => T): Rule<T> {
@@ -151,10 +156,19 @@ function yesterday() {
     return {month: d.getMonth(), day: d.getDate(), year: d.getFullYear()}
 }
 
+type lessThan7 = 0|1|2|3|4|5|6
+
+function lastDayOfWeek(n:lessThan7): DaySpec {
+    const d = new Date()
+    while (d.getDay() != n) d.setDate(d.getDate() - 1)
+    return {month: d.getMonth(), day: d.getDate(), year:d.getFullYear()}
+}
+
 export const dayRule:Rule<DaySpec> = any<DaySpec>([
     seq([month, number], x => ({month: x[0], day: x[1]})), 
     map(raw('yesterday'), ()=>yesterday()),
-    map(raw('today'), () => today())
+    map(raw('today'), () => today()),
+    seq([raw('last'), dayName], x => lastDayOfWeek(x[1]))
 ])
 
 

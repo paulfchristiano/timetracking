@@ -129,3 +129,17 @@ background:black;
     user-select: none;
     cursor:pointer;
 }
+
+.indent {
+    padding-left: 3em;
+}
+.clickable {
+    cursor:pointer;
+}
+.reportParamInput {
+    margin-bottom: 1em;
+}
+
+#reportContainer {
+    margin-top: 1em;
+}

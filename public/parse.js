@@ -160,6 +160,10 @@ export var month = any([
     anyToken(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'nov', 'dec']),
     anyToken(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'november', 'december'])
 ]);
+export var dayName = any([
+    anyToken(['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
+    anyToken(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']),
+]);
 export var number = { kind: 'token', applies: function (x) { return !isNaN(parseInt(x)); }, bind: function (x) { return parseInt(x); } };
 export function seq(rules, f) {
     return { kind: 'sequence', parts: rules, map: f };
@@ -190,10 +194,17 @@ function yesterday() {
     d.setDate(d.getDate() - 1);
     return { month: d.getMonth(), day: d.getDate(), year: d.getFullYear() };
 }
+function lastDayOfWeek(n) {
+    var d = new Date();
+    while (d.getDay() != n)
+        d.setDate(d.getDate() - 1);
+    return { month: d.getMonth(), day: d.getDate(), year: d.getFullYear() };
+}
 export var dayRule = any([
     seq([month, number], function (x) { return ({ month: x[0], day: x[1] }); }),
     map(raw('yesterday'), function () { return yesterday(); }),
-    map(raw('today'), function () { return today(); })
+    map(raw('today'), function () { return today(); }),
+    seq([raw('last'), dayName], function (x) { return lastDayOfWeek(x[1]); })
 ]);
 var ampmTimeRule = any([
     seq([colonTime, ampm], function (xs) { return ({ hours: xs[0][0], minutes: xs[0][1], ampm: xs[1] }); }),
