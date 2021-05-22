@@ -1394,9 +1394,36 @@ export function loadColors() {
         console.log(e.val());
     });
 }
+function HSVtoRGB(h, s, v) {
+    var r, g, b, i, f, p, q, t;
+    function round(x) {
+        var result = Math.floor(x * 256);
+        return (result == 256) ? 255 : result;
+    }
+    i = Math.floor(h * 6);
+    f = h * 6 - i;
+    p = v * (1 - s);
+    q = v * (1 - f * s);
+    t = v * (1 - (1 - f) * s);
+    function color(r, g, b) {
+        return {
+            r: round(r), g: round(g), b: round(b)
+        };
+    }
+    switch (i % 6) {
+        case 0: return color(v, t, p);
+        case 1: return color(q, v, p);
+        case 2: return color(p, v, t);
+        case 3: return color(p, q, v);
+        case 4: return color(t, p, v);
+        case 5: return color(v, p, q);
+        default: return assertNever(i % 6);
+    }
+}
 var colors = ['#fc6472', '#f4b2a6', '#eccdb3', '#bcefd0', '#a1e8e4', '#23c8b2', '#c3ecee'];
 function randomColor() {
-    return colorFromHex(colors[randInt(colors.length)]);
+    return HSVtoRGB(Math.random(), 0.5 + 0.3 * Math.random(), 1);
+    //return colorFromHex(colors[randInt(colors.length)])
     /*
     return {
         r: randInt(256),
