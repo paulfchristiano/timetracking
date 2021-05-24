@@ -12,7 +12,7 @@
 }
 
 .popup {
-    position:absolute;
+    position:fixed;
     visibility:hidden;
     top:5em;
     left:5em;
