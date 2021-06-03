@@ -345,6 +345,7 @@ export async function loadTracker(): Promise<void> {
     }, 1000)
     function render() {
         heartbeats = []
+        const toStart:Array<[HTMLDivElement, Entry, Entry|null]> = [];
         const elem = document.getElementById('inputs')
         const elements:HTMLDivElement[] = []
         if (elem != null) elem.innerHTML = ''
@@ -412,10 +413,13 @@ export async function loadTracker(): Promise<void> {
                     focused = end;
                 })
                 elements.push(row)
-                if (focused == end) startInput(inputWrapper, start, end)
+                if (focused == end) toStart.push([inputWrapper, start, end])
             }
         }
         if (elem != null) elem.append(...elements)
+        for (const [inputWrapper, start, end] of toStart) {
+            startInput(inputWrapper, start, end)
+        }
     }
     render()
 }
