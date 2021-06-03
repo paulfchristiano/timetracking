@@ -249,6 +249,12 @@ function applyAndSave(entries:Entry[], update:TimeUpdate, credentials:Credential
     sendUpdates(updates, credentials)
 }
 
+function div(cls:string): HTMLDivElement {
+    const result = document.createElement('div')
+    result.setAttribute('class', cls)
+    return result
+}
+
 export async function loadTracker(): Promise<void> {
     const credentials:Credentials = await getCredentials()
     const profile:Profile = loadProfile()
@@ -263,9 +269,9 @@ export async function loadTracker(): Promise<void> {
         applyAndSave(entries, update, credentials)
         render()
     }
-    function startInput(elem:JQE, start:Entry, end:Entry|null): void {
+    function startInput(elem:HTMLDivElement, start:Entry, end:Entry|null): void {
         $('.inputwrapper').empty()
-        const x = new InputBox(getDistinctLabels(entries), elem)
+        const x = new InputBox(getDistinctLabels(entries), $(elem))
         x.focus()
         if (end == null) {
             x.bind((a, s) => {
@@ -326,11 +332,11 @@ export async function loadTracker(): Promise<void> {
             })
         }
     }
-    let heartbeats:[Date, JQE][] = []
-    function setTimer(start:Date, elem:JQE): void {
+    let heartbeats:[Date, HTMLDivElement][] = []
+    function setTimer(start:Date, elem:HTMLDivElement): void {
         const diff = new Date().getTime() - start.getTime()
         if (diff > 1000)
-            elem.text(renderDuration(new Date().getTime() - start.getTime()))
+            elem.textContent = renderDuration(new Date().getTime() - start.getTime())
     }
     setInterval(function() {
         for (const [start, elem] of heartbeats) {
@@ -339,16 +345,17 @@ export async function loadTracker(): Promise<void> {
     }, 1000)
     function render() {
         heartbeats = []
-        const elem = $('#inputs')
-        elem.html('')
+        const elem = document.getElementById('inputs')
+        const elements:HTMLDivElement[] = []
+        if (elem != null) elem.innerHTML = ''
         const sortedEntries = sortAndFilter(entries)
         for (const [end, start] of listPairsAndEnds(revit(sortedEntries))) {
             //end = entries[i]
             if (end == null) {
-                const row = $(`<div class='trackertimerow'></div>`)
-                row.append('<div class="nowdot"></div>')
-                row.append($(`<div class='timelabel'></div>`))
-                elem.append(row)
+                const row = div('trackertimerow')
+                row.appendChild(div('nowdot'))
+                row.appendChild(div('timelabel'))
+                elements.push(row)
             } else {
                 /*
                 const e = $(`<span class='clickable'>[${renderTime(end.time)}]</span>`)
@@ -356,71 +363,59 @@ export async function loadTracker(): Promise<void> {
                 f.append(e)
                 elem.append(f)
                 */
-                const row = $(`<div class='trackertimerow'></div>`)
-                row.append('<div class="dot"></div>')
-                const time = $(`<div class='timelabel' contenteditable='true'>${renderTime(end.time)}</div>`)
-                time.blur(function() {
-                    time.text(renderTime(end.time))
+                const row = div('trackertimerow')
+                row.appendChild(div('dot'))
+                const time = div('timelabel')
+                time.textContent = renderTime(end.time)
+                time.setAttribute('contenteditable', 'true')
+                time.addEventListener('blur', function() {
+                    time.textContent = renderTime(end.time)
                 })
-                time.keydown(function(e) {
+                time.addEventListener('keydown', function(e) {
                     if (e.keyCode == 13) {
                         e.preventDefault()
-                        const date = parseTime(time.text(), end.time, 'closest')
+                        const date = parseTime(time.textContent || '', end.time, 'closest')
                         if (date != 'error') {
                             callback({kind: 'move', entry: end, time: date})
                         }
                     }
                 })
-                row.append(time)
-                elem.append(row)
+                row.appendChild(time)
+                elements.push(row)
             }
             //TODO unify these two cases
-            if (start != null && end != null) {
-                const label = labelFrom(start, end)
-                const style = `background: ${renderColor(getColor(label, profile))}; float: left`
-                const row = $(`<div class='trackerrow'></div>`)
-                const text = $(`<div class='trackerlabel'></div>`)
-                text.append($(`<div>${renderLabel(label)}</div>`))
-                text.append($(`<div>${renderDuration(end.time.getTime() - start.time.getTime())}</div>`))
-                const e = $(`<div class="line" style='${style}''></div>`)
-                row.append(e)
-                row.append(text)
-                const inputBuffer = $(`<div class='inputbuffer'></div>`)
-                const inputWrapper = $(`<div class='inputwrapper'></div>`)
-                inputBuffer.append(inputWrapper)
+            if (start != null) {
+                const label = (end == null) ? start.after || 'TBD' : labelFrom(start, end)
+                const color:string = (end == null) ? 'gray' : renderColor(getColor(label, profile))
+                const row = div('trackerrow')
+                const text = div('trackerlabel')
+                const labelDiv = div('labeldiv')
+                labelDiv.append(...renderLabel(label))
+                const durationDiv = div('durationdiv')
+                if (end == null) {
+                    setTimer(start.time, durationDiv)
+                    heartbeats.push([start.time, durationDiv])
+                } else {
+                    durationDiv.textContent = renderDuration(end.time.getTime() - start.time.getTime()) 
+                }
+                text.append(labelDiv, durationDiv)
+                const line = div('line')
+                line.style.backgroundColor = color
+                line.style.float = 'left'
+                row.append(line, text)
+                const inputBuffer = div('inputbuffer')
+                const inputWrapper = div('inputwrapper')
+                inputBuffer.appendChild(inputWrapper)
                 row.append(inputBuffer)
-                text.click(() => {
+                text.addEventListener('click', () => {
                     startInput(inputWrapper, start, end)
                     focused = end;
                 })
-                elem.append(row)
+                elements.push(row)
                 if (focused == end) startInput(inputWrapper, start, end)
             }
-            if (start != null && end == null) {
-                const label = start.after || 'TBD'
-                const style = `background: gray; float: left`
-                const row = $(`<div class='trackerrow'></div>`)
-                const text = $(`<div class='trackerlabel'></div>`)
-                text.append($(`<div>${renderLabel(label)}</div>`))
-                const timer = $(`<div id='runningtimer'></div>`)
-                setTimer(start.time, timer)
-                text.append(timer)
-                heartbeats.push([start.time, timer])
-                const e = $(`<div class="line" style='${style}''></div>`)
-                row.append(e)
-                row.append(text)
-                const inputBuffer = $(`<div class='inputbuffer'></div>`)
-                const inputWrapper = $(`<div class='inputwrapper'></div>`)
-                inputBuffer.append(inputWrapper)
-                row.append(inputBuffer)
-                text.click(() => {
-                    startInput(inputWrapper, start, end)
-                    focused = end;
-                })
-                elem.append(row)
-                if (focused == null) startInput(inputWrapper, start, end)
-            }
         }
+        if (elem != null) elem.append(...elements)
     }
     render()
 }
@@ -642,15 +637,22 @@ function daysAgo(n:number): Date {
     return result
 }
 
-function renderLabel(label:Label): string {
+function spanText(cls:string, text:string): HTMLSpanElement {
+    const result = document.createElement('span')
+    result.setAttribute('class', cls)
+    result.textContent = text
+    return result
+}
+
+function renderLabel(label:Label): (Node|string)[] {
     if (label.length > 0 && label[0] == '?') {
-        return `<span class='errorlabel'>${label}</span>`
+        return [spanText('errorlabel', label)]
     }
     const parts = label.split('/')
-    if (parts.length == 1) return label
+    if (parts.length == 1) return [label]
     const prefix = parts.slice(0, parts.length-1).join('/')
     const suffix = parts[parts.length-1]
-    return `${suffix} <span class='categorylabel'>(${prefix})</span>` 
+    return [`${suffix} `, spanText('categorylabel', `(${prefix})`)] 
 }
 
 function* namesFrom(label:Label|undefined): Generator<Label> {
@@ -691,10 +693,17 @@ interface MyDate {
     minute: number
 }
 
+const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+function renderMonth(d:Date): string {
+    return months[d.getMonth()]
+}
+
 function convertDate(d:Date): MyDate {
     return {
         year: d.getFullYear(),
-        month: d.toLocaleString('default', {month: 'short'}),
+        //month: d.toLocaleString('default', {month: 'short'}),
+        month: renderMonth(d),
         day: d.getDate(),
         hour: (d.getHours() + 11) % 12 + 1,
         ampm: d.getHours() < 12 ? 'am' : 'pm',
