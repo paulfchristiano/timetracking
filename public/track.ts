@@ -1,5 +1,5 @@
 import e from 'express'
-import { Callbacks, data, readyException } from 'jquery'
+import { Callbacks, data, map, readyException } from 'jquery'
 import { InputBox } from './suggester.js'
 import { DateSpec, Action, dateRule, parseString } from './parse.js'
 import { Entry, Label, serializeEntries, deserializeEntries, uid, newUID, makeNewEntry } from './entries.js'
@@ -33,7 +33,9 @@ function labelPopup(label:Label, callback:(update:TimeUpdate) => void): void {
     $('#popup').attr('active', 'true')
     $('#popuplabel').text(label)
     $('#newlabel').empty()
-    $('#newlabel').append(inputAfterColon('Rename to', '', s => callback({kind: 'bulkRename', from: label, to: s})))
+    $('#newlabel').append(inputAfterColon('Rename to', '', function(s) {
+        callback({kind: 'bulkRename', from: label, to: s, moveChildren: $('#movechildren').prop('checked')})
+    }))
     $('#movechildren').prop('checked', true)
 }
 
@@ -350,7 +352,7 @@ export async function loadTracker(): Promise<void> {
         const elements:HTMLDivElement[] = []
         if (elem != null) elem.innerHTML = ''
         const sortedEntries = sortAndFilter(entries)
-        for (const [end, start] of listPairsAndEnds(revit(sortedEntries))) {
+        for (const [end, start] of listPairsAndEnds(revit(sortedEntries, 500))) {
             //end = entries[i]
             if (end == null) {
                 const row = div('trackertimerow')
@@ -1246,7 +1248,7 @@ type TimeUpdate = {kind: 'relabel', before?: Entry, after?: Entry, label: Label}
     | {kind: 'append', before?: Label, after?:Label, time: Date}
     //add new_entry after update.before; new_entry.after = update.before.after; new_entry.before = label; update.before.after = update.label;
     | {kind: 'spliceSplit', before: Entry, label: Label, time: Date} 
-    | {kind: 'bulkRename', from: Label, to:Label}
+    | {kind: 'bulkRename', from: Label, to:Label, moveChildren: boolean}
 
 
 function insertAt<T>(toInsert:T, xs:T[], index:number): T[] {
@@ -1281,6 +1283,23 @@ function upsertInPlace(entry:Entry, entries:Entry[]): void {
     entries.push(entry)
 }
 
+function bulkUpsertInPlace(upserts:Entry[], entries:Entry[]): void {
+    const byId:Map<uid, Entry> = new Map()
+    for (const upsert of upserts) {
+        byId.set(upsert.id, upsert)
+    }
+    for (let i = 0; i < entries.length; i++) {
+        const upsert = byId.get(entries[i].id)
+        if (upsert != undefined) {
+            byId.delete(upsert.id)
+            entries[i] = upsert
+        }
+    }
+    for (const upsert of byId.values()) {
+        entries.push(upsert)
+    }
+}
+
 //Mutates entries in place
 //Also updates in place
 function applyUpdate(
@@ -1292,6 +1311,11 @@ function applyUpdate(
         const newEntry = {...entry, lastModified:now()}
         upsertInPlace(newEntry, entries)
         upsertInPlace(newEntry, updates)
+    }
+    function bulkUpsert(upserts:Entry[]) {
+        const newEntries = upserts.map(entry => ({...entry, lastModified:now()}))
+        bulkUpsertInPlace(newEntries, entries)
+        bulkUpsertInPlace(newEntries, updates)
     }
     switch (update.kind) {
         case 'composite':
@@ -1338,77 +1362,45 @@ function applyUpdate(
             break
         }
         case 'bulkRename':
+            //TODO: make a bulkUpsert method
+            const upserts:Entry[] = []
             for (const entry of entries) {
-                if (matchesLabelRemap(entry.before, update.from)) {
-                    upsert({...entry, before: remapLabel(entry.before, update.from, update.to)})
+                let newEntry = entry
+                let changed = false;
+                if (matchesLabelRemap(newEntry.before, update.from, update.moveChildren)) {
+                    newEntry = {...newEntry, before: remapLabel(newEntry.before, update.from, update.to, update.moveChildren)}
+                    changed = true;
                 }
-                if (matchesLabelRemap(entry.after, update.from)) {
-                    upsert({...entry, after: remapLabel(entry.after, update.from, update.to)})
+                if (matchesLabelRemap(newEntry.after, update.from, update.moveChildren)) {
+                    newEntry = {...newEntry, after: remapLabel(newEntry.after, update.from, update.to, update.moveChildren)}
+                    changed = true;
                 }
-            }    
+                if (changed) upserts.push(newEntry)
+            }
+            bulkUpsert(upserts)
             break
         default: assertNever(update)
     }
 }
 
-function matchesLabelRemap(label:Label|undefined, from:Label) {
-    return (label != undefined && label.slice(0, from.length) == from)
+function matchesLabelRemap(label:Label|undefined, from:Label, moveChildren:boolean) {
+    if (moveChildren) return (label != undefined && label.slice(0, from.length) == from)
+    else return label == from
 }
 
-function remapLabel(label:Label|undefined, from:Label, to:Label): Label|undefined {
-    if (label === undefined) return undefined
-    if (label.slice(0, from.length) === from) {
-        return to + label.slice(from.length)
-    }
-    return label
-}
-/*
-function applyUpdate(
-    update:TimeUpdate,
-    entriesList:Entry[][],
-): Entry[][] {
-    switch (update.kind) {
-        case 'relabel':
-            return entriesList.map(entries => {
-                entries = applyTo(
-                    entry => ({...entry, after: update.label}),
-                    entries,
-                    update.before
-                )
-                entries = applyTo(
-                    entry => ({...entry, before: update.label}),
-                    entries,
-                    update.after
-                )
-                return entries
-            })
-        case 'split': 
-            const newEntry:Entry = {
-                time: update.time,
-                before: update.before.after || update.after.before,
-                after: update.after.before || update.before.after,
-                id: newUID()
-            }
-            return entriesList.map(entries =>
-                insertBetween(newEntry, entries, update.before, update.after)
-            )
-        case 'merge':
-            return entriesList.map(entries => {
-                const [a, b] = neighbors(update.entry, entries)
-                if (a != null) a.after = update.label
-                if (b != null) b.before = update.label
-                return remove(update.entry, entries)
-            })
-        case 'move':
-            return entriesList.map(entries => applyTo(
-                entry => ({...entry, time: update.time}),
-                entries,
-                update.entry
-            ))
-        default: assertNever(update)
+function remapLabel(label:Label|undefined, from:Label, to:Label, moveChildren:boolean): Label|undefined {
+    if (moveChildren) {
+        if (label === undefined) return undefined
+        if (label.slice(0, from.length) === from) {
+            return to + label.slice(from.length)
+        }
+        return label
+    } else {
+        if (label == from) return to
+        else return label
     }
 }
-*/
+
 
 function* listPairsAndEnds<T>(xs:Generator<T>): Generator<[T|null, T|null]> {
     let a:T|null = null;
@@ -1440,8 +1432,9 @@ function* it<T>(xs:T[]): Generator<T> {
         yield xs[i]
     }
 }
-function* revit<T>(xs:T[]): Generator<T> {
-    for (let i = xs.length-1; i>=0; i--) {
+function* revit<T>(xs:T[], limit?:number): Generator<T> {
+    const bottom = (limit == undefined) ? 0 : xs.length - limit
+    for (let i = xs.length-1; i>=bottom; i--) {
         yield xs[i]
     }
 }
@@ -1730,7 +1723,7 @@ export function flattenReport(report:Report): Report {
     for (const [label, [time, sub]] of entries) {
         const flatSub = flattenReport(sub)
         const subEntries = Object.entries(flatSub);
-        if (subEntries.length == 1) {
+        if (subEntries.length == 1 && subEntries[0][1][0] == time) {
             result[`${label}/${subEntries[0][0]}`] = subEntries[0][1]
         } else {
             result[label] = [time, flatSub] 
@@ -1769,7 +1762,6 @@ function renderReport(report:Report, prefix:string = '', indentation:number=0, t
             const child = renderReport(sub, `${prefix}${label}/`, indentation+1)
             let visible:boolean = false
             head.click(function() {
-                console.log(visible)
                 if (visible) {
                     visible = false;
                     child.hide();
