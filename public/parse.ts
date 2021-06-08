@@ -1,8 +1,11 @@
 //TODO: wish I could accurately typecheck this...
 //(at least it can be separated and be kind of easy to debug)
-type Rule<T> = {kind: 'token', bind: (x:string) => T, applies: (x:string) => boolean}
+export type Rule<T> = {kind: 'token', bind: (x:string) => T, applies: (x:string) => boolean}
     | {kind: 'sequence', parts: Rule<any>[], map: (xs:any[]) => T}
     | {kind: 'either', options: [Rule<any>, (x:any) => T][]}
+
+
+export const emptyRule:Rule<null> = {kind: 'sequence', parts: [], map: () => null}
 
 // return value is [result, parsed, unparsed]
 export function parseString<T>(rule:Rule<T>, s:string): 'fail' | 'prefix' | [T, string, string] {
@@ -105,10 +108,10 @@ export const month: Rule<number> = any<number>([
     anyToken(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'november', 'december'])
 ])
 
-export const dayName: Rule<number> = any<number>([
+export const dayName: Rule<lessThan7> = any<number>([
     anyToken(['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']),
     anyToken(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']),
-])
+]) as Rule<lessThan7>
 
 export const number: Rule<number> = {kind: 'token', applies: x => !isNaN(parseInt(x)), bind: x => parseInt(x)}
 
@@ -158,17 +161,20 @@ function yesterday() {
 
 type lessThan7 = 0|1|2|3|4|5|6
 
-function lastDayOfWeek(n:lessThan7): DaySpec {
+function lastDayOfWeek(n:lessThan7, weeksAgo:number=0): DaySpec {
     const d = new Date()
     while (d.getDay() != n) d.setDate(d.getDate() - 1)
+    d.setDate(d.getDate() - 7 * weeksAgo)
     return {month: d.getMonth(), day: d.getDate(), year:d.getFullYear()}
 }
 
 export const dayRule:Rule<DaySpec> = any<DaySpec>([
-    seq([month, number], x => ({month: x[0], day: x[1]})), 
+    seq([month, number], x => ({month: x[0], day: x[1]})),
+    seq([number, raw('/'), number], x => ({month: x[0] - 1, day: x[2]})),
     map(raw('yesterday'), ()=>yesterday()),
     map(raw('today'), () => today()),
-    seq([raw('last'), dayName], x => lastDayOfWeek(x[1]))
+    map(dayName, x => lastDayOfWeek(x)),
+    seq([raw('last'), dayName], x => lastDayOfWeek(x[1], 1))
 ])
 
 
@@ -182,31 +188,34 @@ export type DateSpec = 'now' | {
 
 const ampmTimeRule:Rule<DateSpec> = any([
     seq([colonTime, ampm], xs => ({hours: xs[0][0], minutes: xs[0][1], ampm: xs[1]})),
-    seq([number, ampm], xs => ({hours: xs[0], minutes: 0, ampm: xs[1]}))
+    seq([number, ampm], xs => ({hours: xs[0], minutes: 0, ampm: xs[1]})),
+    map(raw('midnight'), () => ({hours: 12, minutes: 0, ampm: 'am'})),
+    map(raw('noon'), () => ({hours: 12, minutes: 0, ampm: 'pm'}))
 ])
 
 const startOrEnd = any([raw('start'), raw('end')])
 
 export const dateRule:Rule<DateSpec> = any<DateSpec>([
-    seq([ampmTimeRule, raw(','), month, number], x => ({
+    seq([ampmTimeRule, raw(','), dayRule], x => ({
         hours: x[0].hours,
         minutes: x[0].minutes,
         ampm: x[0].ampm,
-        month: (x[2] as number),
-        day: (x[3] as number),
+        month: x[2].month,
+        day: x[2].day,
     })),
-    seq([ampmTimeRule, month, number], x => ({
+    seq([ampmTimeRule, dayRule], x => ({
         hours: x[0].hours,
         minutes: x[0].minutes,
         ampm: x[0].ampm,
-        month: (x[1] as number),
-        day: (x[2] as number),
+        month: x[1].month,
+        day: x[2].day,
     })),
     ampmTimeRule,
     seq([colonTime], x => ({
         hours: (x[0][0] as number),
         minutes: x[0][1] as number,
     })),
+    map(number, x => ({hours: x, minutes: 0})),
     map(raw('now'), () => 'now'),
     seq([startOrEnd, dayRule], x=>({
         hours: (x[0] == 'start') ? 12 : 11,
@@ -221,6 +230,14 @@ export const dateRule:Rule<DateSpec> = any<DateSpec>([
         ampm: 'am',
         month: (x[0] == 'start') ? x[1] : ((x[1] + 1) % 12),
         day: 1
+    })),
+    seq([startOrEnd, number], x=>({
+        hours: 12,
+        minutes: 0,
+        ampm: 'am',
+        month: 1,
+        day: 1,
+        year: (x[0] == 'start') ? x[1] : x[1] + 1
     }))
 ])
 
@@ -230,17 +247,20 @@ function assertNever(value: never): never {
 
 export type Action = {kind: 'raw'} 
     | {kind: 'first', minutes: number}
-    | {kind: 'number', number: number}
+    | {kind: 'default', minutes: number}
     | {kind: 'now'}
     | {kind: 'last', minutes: number}
+    | {kind: 'except', minutes: number}
     | {kind: 'until', time: DateSpec}
     | {kind: 'after', time: DateSpec}
+    | {kind: 'continue'}
 
 export const rawAction:Action = {kind: 'raw'}
 
 export const actionRule:Rule<Action> = any<Action>([
-    map(number, x => ({kind: 'number', number: x})),
+    map(duration, x => ({kind: 'default', minutes: x})),
     map(raw('now'), () => ({kind: 'now'})),
-    seq([any([raw('first'), raw('last')]), duration], xs => ({kind: xs[0] as ('first' | 'last'), minutes: xs[1] as number})),
-    seq([any([raw('until'), raw('after')]), dateRule], xs => ({kind: xs[0] as ('until'| 'after'),  time: xs[1] as DateSpec}))
+    map(raw('continue'), () => ({kind: 'continue'})),
+    seq([any([raw('first'), raw('last'), raw('except')]), duration], xs => ({kind: xs[0] as ('first' | 'last' | 'except'), minutes: xs[1] as number})),
+    seq([any([raw('until'), raw('after'), map(raw('since'), () => 'after')]), dateRule], xs => ({kind: xs[0] as ('until'| 'after'),  time: xs[1] as DateSpec}))
 ])

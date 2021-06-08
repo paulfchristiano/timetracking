@@ -13,10 +13,19 @@
 
 <body>
 
-    <div> Start: <input class='reportParamInput' id='startDate'></input> </div>
-    <div> End: <input class='reportParamInput' id='endDate'></input> </div>
-    <div> Label: <input class='reportParamInput' id='topLabel'></input> </div>
-    <div> <span class="option" choosable id="generate">Generate</span> </div>
+    <div id='renamePopup' class='popup'>
+        <div>Label: <span id='popuplabel'></span></div>
+        <div id='newlabel'></div>
+        <div><label for='movechildren'>Move children: </label> <input type='checkbox' id='movechildren'> </div>
+    </div>
+    <div id='exportPopup' class='popup'>
+    </div>
+
+    <div> <label for='startDate'>Start:</label> <input class='reportParamInput' id='startDate'></input> </div>
+    <div> <label for='endDate'>End:</label> <input class='reportParamInput' id='endDate'></input> </div>
+    <div> <label for='topLabel'>Labels: </label><input class='reportParamInput' id='topLabel'></input> </div>
+    <!--<div style='margin-bottom:1em;'> <label for='editableReport'>Edit: </label><input type='checkbox' id='editableReport'></input> </div>-->
+    <div> <span class="option" choosable id="generate">Generate</span> <span class="option" choosable id="export">Export</span> </div>
     <div id='reportContainer'></div>
       
       

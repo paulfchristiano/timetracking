@@ -77,7 +77,7 @@ var __spread = (this && this.__spread) || function () {
     return ar;
 };
 import { InputBox } from './suggester.js';
-import { dateRule, parseString } from './parse.js';
+import { dateRule, parseString, actionRule, emptyRule } from './parse.js';
 import { serializeEntries, deserializeEntries, newUID, makeNewEntry } from './entries.js';
 function enumfrom(xs, i, j) {
     var k;
@@ -110,13 +110,19 @@ function calendarSpan(label, spanStart, spanEnd, start, end, profile) {
     var result = $("<div class='event' style='" + style + "'><div class='spantext'>" + label + "</div></div>");
     return result;
 }
-function labelPopup(label, callback) {
-    $('#popup').attr('active', 'true');
+function labelPopup(label, callback, entries) {
+    $('#renamePopup').attr('active', 'true');
     $('#popuplabel').text(label);
     $('#newlabel').empty();
-    $('#newlabel').append(inputAfterColon('Rename to', '', function (s) {
+    $('#newlabel').html('Rename to: ');
+    var e = div('inputwrapper');
+    $('#newlabel').append(e);
+    var input = new InputBox(emptyRule, null, getDistinctLabels(entries), $(e));
+    input.bind(function (a, s) {
         callback({ kind: 'bulkRename', from: label, to: s, moveChildren: $('#movechildren').prop('checked') });
-    }));
+        hideLabelPopup();
+    });
+    input.focus();
     $('#movechildren').prop('checked', true);
 }
 function findEntry(id, entries) {
@@ -181,18 +187,18 @@ startEntry, endEntry, profile, popup, callback) {
         }
         finally { if (e_1) throw e_1.error; }
     }
-    var input = new InputBox(getDistinctLabels(entries), $('.inputwrapper'));
+    var input = new InputBox(actionRule, { kind: 'raw' }, getDistinctLabels(entries), $('.inputwrapper'));
     input.bind(function (a, s) {
         switch (a.kind) {
             case 'raw':
                 callback({ kind: 'relabel', label: s, before: entries[endIndex - 1], after: entries[endIndex] });
                 break;
-            case 'number':
+            case 'default':
                 callback({
                     kind: 'split',
                     before: entries[endIndex - 1],
                     after: entries[endIndex],
-                    time: minutesAfter(entries[endIndex - 1].time, a.number),
+                    time: minutesAfter(entries[endIndex - 1].time, a.minutes),
                     labelBefore: s
                 });
                 break;
@@ -201,6 +207,15 @@ startEntry, endEntry, profile, popup, callback) {
                     kind: 'split',
                     before: entries[endIndex - 1],
                     after: entries[endIndex],
+                    time: minutesAfter(entries[endIndex].time, -a.minutes),
+                    labelAfter: s
+                });
+                break;
+            case 'except':
+                callback({
+                    kind: 'split',
+                    before: entries[startIndex],
+                    after: entries[startIndex + 1],
                     time: minutesAfter(entries[endIndex].time, -a.minutes),
                     labelAfter: s
                 });
@@ -227,11 +242,14 @@ startEntry, endEntry, profile, popup, callback) {
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex + 1],
-                    time: specToDate(a.time, entries[startIndex].time, 'next'),
+                    time: specToDate(a.time, entries[startIndex + 1].time, 'previous'),
                     labelAfter: s
                 });
                 break;
             case 'now':
+                break;
+            case 'continue':
+                callback({ kind: 'delete', entry: entries[startIndex], shiftForward: entries[startIndex + 1] });
                 break;
             default: assertNever(a);
         }
@@ -290,12 +308,12 @@ function specToDate(spec, anchor, rel) {
     var e_4, _a, e_5, _b;
     if (spec == 'now')
         return now();
-    var candidate = new Date(anchor);
-    candidate.setMinutes(spec.minutes);
+    var copiedAnchor = new Date(anchor);
+    copiedAnchor.setMinutes(spec.minutes);
     var best = new Date(anchor);
     var bestDiff = null;
     var month = (spec.month === undefined) ? anchor.getMonth() : spec.month;
-    candidate.setMonth(month);
+    copiedAnchor.setMonth(month);
     var hours = (spec.hours == 12) ? 0 : spec.hours;
     var dateCandidates = (spec.day === undefined) ? [-1, 0, 1].map(function (x) { return anchor.getDate() + x; }) : [spec.day];
     var ampmCandidates = (spec.ampm === undefined) ? ['am', 'pm'] : [spec.ampm];
@@ -306,6 +324,7 @@ function specToDate(spec, anchor, rel) {
             try {
                 for (var hourCandidates_1 = (e_5 = void 0, __values(hourCandidates)), hourCandidates_1_1 = hourCandidates_1.next(); !hourCandidates_1_1.done; hourCandidates_1_1 = hourCandidates_1.next()) {
                     var hours_1 = hourCandidates_1_1.value;
+                    var candidate = new Date(copiedAnchor);
                     candidate.setDate(date);
                     candidate.setHours(hours_1);
                     var diff = candidate.getTime() - anchor.getTime();
@@ -358,10 +377,11 @@ export function loadTracker() {
             applyAndSave(entries, update, credentials);
             render();
         }
-        function startInput(elem, start, end) {
+        function startInput(elem, startIndex, entries) {
             $('.inputwrapper').empty();
-            var x = new InputBox(getDistinctLabels(entries), $(elem));
-            x.focus();
+            var x = new InputBox(actionRule, { kind: 'raw' }, getDistinctLabels(entries), $(elem));
+            var start = entries[startIndex];
+            var end = (startIndex < entries.length - 1) ? entries[startIndex + 1] : null;
             if (end == null) {
                 x.bind(function (a, s) {
                     switch (a.kind) {
@@ -378,8 +398,14 @@ export function loadTracker() {
                                     { kind: 'append', time: new Date(), before: s }
                                 ] });
                             break;
-                        case 'number':
-                            callback({ kind: 'append', before: s, time: minutesAfter(start.time, a.number) });
+                        case 'except':
+                            callback({ kind: 'composite', updates: [
+                                    { kind: 'append', time: minutesAfter(start.time, a.minutes), after: s },
+                                    { kind: 'append', time: new Date(), before: s }
+                                ] });
+                            break;
+                        case 'default':
+                            callback({ kind: 'append', before: s, time: minutesAfter(start.time, a.minutes) });
                             break;
                         case 'now':
                             callback({ kind: 'relabel', label: s, before: start });
@@ -389,6 +415,9 @@ export function loadTracker() {
                             break;
                         case 'after':
                             callback({ kind: 'append', after: s, time: specToDate(a.time, new Date(), 'previous') });
+                            break;
+                        case 'continue':
+                            callback({ kind: 'delete', entry: start, reflectBack: (startIndex > 0) ? entries[startIndex - 1] : undefined });
                             break;
                         default: assertNever(a);
                     }
@@ -405,22 +434,29 @@ export function loadTracker() {
                             break;
                         case 'now':
                             break;
-                        case 'number':
-                            callback({ kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.number) });
+                        case 'default':
+                            callback({ kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.minutes) });
                             break;
                         case 'last':
                             callback({ kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes) });
+                            break;
+                        case 'except':
+                            callback({ kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes) });
                             break;
                         case 'until':
                             callback({ kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next') });
                             break;
                         case 'after':
-                            callback({ kind: 'split', labelAfter: s, before: start, after: end, time: specToDate(a.time, start.time, 'next') });
+                            callback({ kind: 'split', labelAfter: s, before: start, after: end, time: specToDate(a.time, end.time, 'previous') });
+                            break;
+                        case 'continue':
+                            callback({ kind: 'delete', entry: start, shiftForward: end });
                             break;
                         default: assertNever(a);
                     }
                 });
             }
+            return x;
         }
         function setTimer(start, elem) {
             var diff = new Date().getTime() - start.getTime();
@@ -428,7 +464,7 @@ export function loadTracker() {
                 elem.textContent = renderDuration(new Date().getTime() - start.getTime());
         }
         function render() {
-            var e_6, _a, e_7, _b;
+            var e_6, _a;
             heartbeats = [];
             var toStart = [];
             var elem = document.getElementById('inputs');
@@ -436,8 +472,9 @@ export function loadTracker() {
             if (elem != null)
                 elem.innerHTML = '';
             var sortedEntries = sortAndFilter(entries);
-            var _loop_2 = function (end, start) {
-                //end = entries[i]
+            var _loop_2 = function (i) {
+                var end = (i == sortedEntries.length - 1) ? null : sortedEntries[i + 1];
+                var start = sortedEntries[i];
                 if (end == null) {
                     var row = div('trackertimerow');
                     row.appendChild(div('nowdot'));
@@ -445,12 +482,6 @@ export function loadTracker() {
                     elements.push(row);
                 }
                 else {
-                    /*
-                    const e = $(`<span class='clickable'>[${renderTime(end.time)}]</span>`)
-                    const f = $('<div></div>')
-                    f.append(e)
-                    elem.append(f)
-                    */
                     var row = div('trackertimerow');
                     row.appendChild(div('dot'));
                     var time_1 = div('timelabel');
@@ -471,7 +502,6 @@ export function loadTracker() {
                     row.appendChild(time_1);
                     elements.push(row);
                 }
-                //TODO unify these two cases
                 if (start != null) {
                     var label = (end == null) ? start.after || 'TBD' : labelFrom(start, end);
                     var color = (end == null) ? 'gray' : renderColor(getColor(label, profile));
@@ -497,44 +527,36 @@ export function loadTracker() {
                     inputBuffer.appendChild(inputWrapper_1);
                     row.append(inputBuffer);
                     text.addEventListener('click', function () {
-                        startInput(inputWrapper_1, start, end);
+                        startInput(inputWrapper_1, i, sortedEntries).focus();
                         focused = end;
                     });
                     elements.push(row);
-                    if (focused == end)
-                        toStart.push([inputWrapper_1, start, end]);
+                    if (focused == end) {
+                        var inputBox_1 = startInput(inputWrapper_1, i, sortedEntries);
+                        toStart.push(function () { return inputBox_1.focus(); });
+                    }
                 }
             };
-            try {
-                for (var _c = __values(listPairsAndEnds(revit(sortedEntries, 500))), _d = _c.next(); !_d.done; _d = _c.next()) {
-                    var _e = __read(_d.value, 2), end = _e[0], start = _e[1];
-                    _loop_2(end, start);
-                }
-            }
-            catch (e_6_1) { e_6 = { error: e_6_1 }; }
-            finally {
-                try {
-                    if (_d && !_d.done && (_a = _c.return)) _a.call(_c);
-                }
-                finally { if (e_6) throw e_6.error; }
+            for (var i = sortedEntries.length - 1; i >= 0 && i >= sortedEntries.length - entriesToShow; i--) {
+                _loop_2(i);
             }
             if (elem != null)
                 elem.append.apply(elem, __spread(elements));
             try {
                 for (var toStart_1 = __values(toStart), toStart_1_1 = toStart_1.next(); !toStart_1_1.done; toStart_1_1 = toStart_1.next()) {
-                    var _f = __read(toStart_1_1.value, 3), inputWrapper = _f[0], start = _f[1], end = _f[2];
-                    startInput(inputWrapper, start, end);
+                    var f = toStart_1_1.value;
+                    f();
                 }
             }
-            catch (e_7_1) { e_7 = { error: e_7_1 }; }
+            catch (e_6_1) { e_6 = { error: e_6_1 }; }
             finally {
                 try {
-                    if (toStart_1_1 && !toStart_1_1.done && (_b = toStart_1.return)) _b.call(toStart_1);
+                    if (toStart_1_1 && !toStart_1_1.done && (_a = toStart_1.return)) _a.call(toStart_1);
                 }
-                finally { if (e_7) throw e_7.error; }
+                finally { if (e_6) throw e_6.error; }
             }
         }
-        var credentials, profile, entries, focused, heartbeats;
+        var credentials, profile, entries, focused, entriesToShow, heartbeats;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
@@ -548,23 +570,23 @@ export function loadTracker() {
                         entries.push(makeNewEntry(now(), undefined, undefined));
                         saveEntries(entries);
                     }
-                    sortEntries(entries);
                     focused = null;
+                    entriesToShow = maxEntriesToShow();
                     heartbeats = [];
                     setInterval(function () {
-                        var e_8, _a;
+                        var e_7, _a;
                         try {
                             for (var heartbeats_1 = __values(heartbeats), heartbeats_1_1 = heartbeats_1.next(); !heartbeats_1_1.done; heartbeats_1_1 = heartbeats_1.next()) {
                                 var _b = __read(heartbeats_1_1.value, 2), start = _b[0], elem = _b[1];
                                 setTimer(start, elem);
                             }
                         }
-                        catch (e_8_1) { e_8 = { error: e_8_1 }; }
+                        catch (e_7_1) { e_7 = { error: e_7_1 }; }
                         finally {
                             try {
                                 if (heartbeats_1_1 && !heartbeats_1_1.done && (_a = heartbeats_1.return)) _a.call(heartbeats_1);
                             }
-                            finally { if (e_8) throw e_8.error; }
+                            finally { if (e_7) throw e_7.error; }
                         }
                     }, 1000);
                     render();
@@ -594,7 +616,7 @@ export function loadChart() {
     });
 }
 function renderChart(entries, profile) {
-    var e_9, _a;
+    var e_8, _a;
     var timings = getTotalTime(entries, entries[0].time, entries[entries.length - 1].time);
     var datapoints = [];
     try {
@@ -603,12 +625,12 @@ function renderChart(entries, profile) {
             datapoints.push({ label: k, y: v / 3600, color: renderColor(getColor(k, profile)) });
         }
     }
-    catch (e_9_1) { e_9 = { error: e_9_1 }; }
+    catch (e_8_1) { e_8 = { error: e_8_1 }; }
     finally {
         try {
             if (timings_1_1 && !timings_1_1.done && (_a = timings_1.return)) _a.call(timings_1);
         }
-        finally { if (e_9) throw e_9.error; }
+        finally { if (e_8) throw e_8.error; }
     }
     /* tslint:disable-next-line */
     var chart = new CanvasJS.Chart("chartContainer", {
@@ -631,7 +653,7 @@ function length(span) {
     return secondsBetween(span.start.time, span.end.time);
 }
 function renderBars(entries, buckets, profile) {
-    var e_10, _a, e_11, _b, e_12, _c, e_13, _d;
+    var e_9, _a, e_10, _b, e_11, _c, e_12, _d;
     var seconds = [];
     try {
         for (var buckets_1 = __values(buckets), buckets_1_1 = buckets_1.next(); !buckets_1_1.done; buckets_1_1 = buckets_1.next()) {
@@ -640,38 +662,38 @@ function renderBars(entries, buckets, profile) {
             seconds.push(sumByName(spans.map(function (span) { return [span.label, length(span)]; })));
         }
     }
-    catch (e_10_1) { e_10 = { error: e_10_1 }; }
+    catch (e_9_1) { e_9 = { error: e_9_1 }; }
     finally {
         try {
             if (buckets_1_1 && !buckets_1_1.done && (_a = buckets_1.return)) _a.call(buckets_1);
         }
-        finally { if (e_10) throw e_10.error; }
+        finally { if (e_9) throw e_9.error; }
     }
     var keys = new Set();
     try {
         for (var seconds_1 = __values(seconds), seconds_1_1 = seconds_1.next(); !seconds_1_1.done; seconds_1_1 = seconds_1.next()) {
             var m = seconds_1_1.value;
             try {
-                for (var m_1 = (e_12 = void 0, __values(m)), m_1_1 = m_1.next(); !m_1_1.done; m_1_1 = m_1.next()) {
+                for (var m_1 = (e_11 = void 0, __values(m)), m_1_1 = m_1.next(); !m_1_1.done; m_1_1 = m_1.next()) {
                     var k = m_1_1.value;
                     keys.add(k[0]);
                 }
             }
-            catch (e_12_1) { e_12 = { error: e_12_1 }; }
+            catch (e_11_1) { e_11 = { error: e_11_1 }; }
             finally {
                 try {
                     if (m_1_1 && !m_1_1.done && (_c = m_1.return)) _c.call(m_1);
                 }
-                finally { if (e_12) throw e_12.error; }
+                finally { if (e_11) throw e_11.error; }
             }
         }
     }
-    catch (e_11_1) { e_11 = { error: e_11_1 }; }
+    catch (e_10_1) { e_10 = { error: e_10_1 }; }
     finally {
         try {
             if (seconds_1_1 && !seconds_1_1.done && (_b = seconds_1.return)) _b.call(seconds_1);
         }
-        finally { if (e_11) throw e_11.error; }
+        finally { if (e_10) throw e_10.error; }
     }
     var data = [];
     var _loop_3 = function (k) {
@@ -692,12 +714,12 @@ function renderBars(entries, buckets, profile) {
             _loop_3(k);
         }
     }
-    catch (e_13_1) { e_13 = { error: e_13_1 }; }
+    catch (e_12_1) { e_12 = { error: e_12_1 }; }
     finally {
         try {
             if (keys_1_1 && !keys_1_1.done && (_d = keys_1.return)) _d.call(keys_1);
         }
-        finally { if (e_13) throw e_13.error; }
+        finally { if (e_12) throw e_12.error; }
     }
     var chart = new CanvasJS.Chart("chartContainer", {
         animationEnabled: false,
@@ -719,78 +741,6 @@ function renderBars(entries, buckets, profile) {
         },
         data: data
     });
-    /*
-    var chart = new CanvasJS.Chart("chartContainer", {
-     animationEnabled: true,
-     title: {},
-     axisX: {
-         interval: 1,
-     },
-     axisY:{
-         valueFormatString:"#0h",
-     },
-     data: [{
-         type: "stackedColumn",
-         showInLegend: true,
-         color: "#696661",
-         name: "Q1",
-         dataPoints: [
-             { y: 6.75, x: 0},
-             { y: 8.57, x: 1 },
-             { y: 10.64, x: 2 },
-             { y: 13.97, x: 3 },
-             { y: 15.42, x: 4 },
-             { y: 17.26, x: 5 },
-             { y: 20.26, x: 6 }
-         ]
-         },
-         {
-             type: "stackedColumn",
-             showInLegend: true,
-             name: "Q2",
-             color: "#EDCA93",
-             dataPoints: [
-                 { y: 6.82, x: 0},
-                 { y: 9.02, x: 1 },
-                 { y: 11.80, x: 2 },
-                 { y: 14.11, x: 3 },
-                 { y: 15.96, x: 4 },
-                 { y: 17.73, x: 5 },
-                 { y: 21.5, x: 6 }
-             ]
-         },
-         {
-             type: "stackedColumn",
-             showInLegend: true,
-             name: "Q3",
-             color: "#695A42",
-             dataPoints: [
-                 { y: 7.28, x: 0 },
-                 { y: 9.72, x: 1 },
-                 { y: 13.30, x: 2 },
-                 { y: 14.9, x: 3 },
-                 { y: 18.10, x: 4 },
-                 { y: 18.68, x: 5 },
-                 { y: 22.45, x: 6 }
-             ]
-         },
-         {
-             type: "stackedColumn",
-             showInLegend: true,
-             name: "Q4",
-             color: "#B6B1A8",
-             dataPoints: [
-                 { y: 8.44, x: 0 },
-                 { y: 10.58, x: 1 },
-                 { y: 14.41, x: 2 },
-                 { y: 16.86, x: 3 },
-                 { y: 10.64, x: 4 },
-                 { y: 21.32, x: 5 },
-                 { y: 26.06, x: 6 }
-             ]
-     }]
-     });
-     */
     chart.render();
 }
 export function loadBars() {
@@ -826,7 +776,7 @@ function incrementMap(map, x, dy) {
     map.set(x, (y || 0) + dy);
 }
 function getTotalTime(entries, start, end) {
-    var e_14, _a;
+    var e_13, _a;
     var result = new Map();
     var spans = spansInRange(start, end, entries);
     try {
@@ -836,17 +786,17 @@ function getTotalTime(entries, start, end) {
             incrementMap(result, span.label, seconds);
         }
     }
-    catch (e_14_1) { e_14 = { error: e_14_1 }; }
+    catch (e_13_1) { e_13 = { error: e_13_1 }; }
     finally {
         try {
             if (spans_1_1 && !spans_1_1.done && (_a = spans_1.return)) _a.call(spans_1);
         }
-        finally { if (e_14) throw e_14.error; }
+        finally { if (e_13) throw e_13.error; }
     }
     return result;
 }
 function sumByName(data) {
-    var e_15, _a;
+    var e_14, _a;
     var result = new Map();
     try {
         for (var data_1 = __values(data), data_1_1 = data_1.next(); !data_1_1.done; data_1_1 = data_1.next()) {
@@ -854,12 +804,12 @@ function sumByName(data) {
             incrementMap(result, datum[0], datum[1]);
         }
     }
-    catch (e_15_1) { e_15 = { error: e_15_1 }; }
+    catch (e_14_1) { e_14 = { error: e_14_1 }; }
     finally {
         try {
             if (data_1_1 && !data_1_1.done && (_a = data_1.return)) _a.call(data_1);
         }
-        finally { if (e_15) throw e_15.error; }
+        finally { if (e_14) throw e_14.error; }
     }
     return result;
 }
@@ -913,48 +863,56 @@ function namesFrom(label) {
         }
     });
 }
+//returns labels starting from the most recent
 function getDistinctLabels(entries) {
-    var e_16, _a, e_17, _b, e_18, _c;
-    var s = new Set();
+    var e_15, _a, e_16, _b, e_17, _c;
+    var seen = new Set();
+    var result = [];
+    function add(s) {
+        if (!seen.has(s)) {
+            result.push(s);
+            seen.add(s);
+        }
+    }
     try {
-        for (var entries_1 = __values(entries), entries_1_1 = entries_1.next(); !entries_1_1.done; entries_1_1 = entries_1.next()) {
-            var entry = entries_1_1.value;
+        for (var _d = __values(revit(entries)), _e = _d.next(); !_e.done; _e = _d.next()) {
+            var entry = _e.value;
             try {
-                for (var _d = (e_17 = void 0, __values(namesFrom(entry.before))), _e = _d.next(); !_e.done; _e = _d.next()) {
-                    var name_1 = _e.value;
-                    s.add(name_1);
+                for (var _f = (e_16 = void 0, __values(namesFrom(entry.before))), _g = _f.next(); !_g.done; _g = _f.next()) {
+                    var name_1 = _g.value;
+                    add(name_1);
+                }
+            }
+            catch (e_16_1) { e_16 = { error: e_16_1 }; }
+            finally {
+                try {
+                    if (_g && !_g.done && (_b = _f.return)) _b.call(_f);
+                }
+                finally { if (e_16) throw e_16.error; }
+            }
+            try {
+                for (var _h = (e_17 = void 0, __values(namesFrom(entry.after))), _j = _h.next(); !_j.done; _j = _h.next()) {
+                    var name_2 = _j.value;
+                    add(name_2);
                 }
             }
             catch (e_17_1) { e_17 = { error: e_17_1 }; }
             finally {
                 try {
-                    if (_e && !_e.done && (_b = _d.return)) _b.call(_d);
+                    if (_j && !_j.done && (_c = _h.return)) _c.call(_h);
                 }
                 finally { if (e_17) throw e_17.error; }
             }
-            try {
-                for (var _f = (e_18 = void 0, __values(namesFrom(entry.after))), _g = _f.next(); !_g.done; _g = _f.next()) {
-                    var name_2 = _g.value;
-                    s.add(name_2);
-                }
-            }
-            catch (e_18_1) { e_18 = { error: e_18_1 }; }
-            finally {
-                try {
-                    if (_g && !_g.done && (_c = _f.return)) _c.call(_f);
-                }
-                finally { if (e_18) throw e_18.error; }
-            }
         }
     }
-    catch (e_16_1) { e_16 = { error: e_16_1 }; }
+    catch (e_15_1) { e_15 = { error: e_15_1 }; }
     finally {
         try {
-            if (entries_1_1 && !entries_1_1.done && (_a = entries_1.return)) _a.call(entries_1);
+            if (_e && !_e.done && (_a = _d.return)) _a.call(_d);
         }
-        finally { if (e_16) throw e_16.error; }
+        finally { if (e_15) throw e_15.error; }
     }
-    return Array.from(s.keys());
+    return result;
 }
 function uniques(xs) {
     return __spread(new Set(xs));
@@ -1064,7 +1022,7 @@ function minutesAfter(a, n) {
     return result;
 }
 function applyToTriples(f, xs) {
-    var e_19, _a;
+    var e_18, _a;
     var a = undefined;
     var b = undefined;
     var c = undefined;
@@ -1085,12 +1043,12 @@ function applyToTriples(f, xs) {
             }
         }
     }
-    catch (e_19_1) { e_19 = { error: e_19_1 }; }
+    catch (e_18_1) { e_18 = { error: e_18_1 }; }
     finally {
         try {
             if (xs_1_1 && !xs_1_1.done && (_a = xs_1.return)) _a.call(xs_1);
         }
-        finally { if (e_19) throw e_19.error; }
+        finally { if (e_18) throw e_18.error; }
     }
     addIf(xs[xs.length - 2], xs[xs.length - 1], undefined);
     return result;
@@ -1130,7 +1088,7 @@ function spansFromEntries(entries) {
 }
 // assumes that entries are sorted
 function spansInRange(start, end, entries) {
-    var e_20, _a;
+    var e_19, _a;
     function clip(span) {
         if (span.start.time < start && span.end.time < start) {
             return null;
@@ -1150,12 +1108,12 @@ function spansInRange(start, end, entries) {
                 result.push(span);
         }
     }
-    catch (e_20_1) { e_20 = { error: e_20_1 }; }
+    catch (e_19_1) { e_19 = { error: e_19_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_20) throw e_20.error; }
+        finally { if (e_19) throw e_19.error; }
     }
     return result;
 }
@@ -1206,7 +1164,7 @@ export function loadLabels() {
     });
 }
 function showLabels(entries, credentials) {
-    var e_21, _a;
+    var e_20, _a;
     var labels = getDistinctLabels(entries);
     var profile = loadProfile();
     labels.sort();
@@ -1221,7 +1179,7 @@ function showLabels(entries, credentials) {
         result.append(l);
         l.click(function (e) {
             e.stopPropagation();
-            labelPopup(label, callback);
+            labelPopup(label, callback, entries);
         });
         var picker = $("<input type='color' id='" + label + "-color' class='colorpicker' value='" + colorHex + "'></input>");
         result.append(picker);
@@ -1239,12 +1197,12 @@ function showLabels(entries, credentials) {
             main.append(makeLabelDiv(label));
         }
     }
-    catch (e_21_1) { e_21 = { error: e_21_1 }; }
+    catch (e_20_1) { e_20 = { error: e_20_1 }; }
     finally {
         try {
             if (labels_1_1 && !labels_1_1.done && (_a = labels_1.return)) _a.call(labels_1);
         }
-        finally { if (e_21) throw e_21.error; }
+        finally { if (e_20) throw e_20.error; }
     }
 }
 export function loadCalendar() {
@@ -1278,7 +1236,7 @@ function sortAndFilter(entries) {
 }
 //TODO less sort and filter...
 function showCalendar(entries, initialPopup, profile, callback) {
-    var e_22, _a, e_23, _b;
+    var e_21, _a, e_22, _b;
     var days = [];
     for (var i = 0; i < 7; i++) {
         var d = daysAgo(6 - i);
@@ -1303,35 +1261,35 @@ function showCalendar(entries, initialPopup, profile, callback) {
             getCalendarColumn(day.index).empty();
         }
     }
-    catch (e_22_1) { e_22 = { error: e_22_1 }; }
+    catch (e_21_1) { e_21 = { error: e_21_1 }; }
     finally {
         try {
             if (days_1_1 && !days_1_1.done && (_a = days_1.return)) _a.call(days_1);
         }
-        finally { if (e_22) throw e_22.error; }
+        finally { if (e_21) throw e_21.error; }
     }
     var _loop_4 = function (start, end) {
-        var e_24, _a;
+        var e_23, _a;
         try {
-            for (var days_2 = (e_24 = void 0, __values(days)), days_2_1 = days_2.next(); !days_2_1.done; days_2_1 = days_2.next()) {
+            for (var days_2 = (e_23 = void 0, __values(days)), days_2_1 = days_2.next(); !days_2_1.done; days_2_1 = days_2.next()) {
                 var day = days_2_1.value;
                 var range = partInDay(start.time, end.time, day);
                 if (range !== null) {
-                    var e_25 = calendarSpan(labelFrom(start, end), range.start, range.end, day.start, day.end, profile);
-                    e_25.click(function (e) {
+                    var e_24 = calendarSpan(labelFrom(start, end), range.start, range.end, day.start, day.end, profile);
+                    e_24.click(function (e) {
                         popup(start.id, end.id);
                         e.stopPropagation();
                     });
-                    getCalendarColumn(day.index).append(e_25);
+                    getCalendarColumn(day.index).append(e_24);
                 }
             }
         }
-        catch (e_24_1) { e_24 = { error: e_24_1 }; }
+        catch (e_23_1) { e_23 = { error: e_23_1 }; }
         finally {
             try {
                 if (days_2_1 && !days_2_1.done && (_a = days_2.return)) _a.call(days_2);
             }
-            finally { if (e_24) throw e_24.error; }
+            finally { if (e_23) throw e_23.error; }
         }
     };
     try {
@@ -1340,12 +1298,12 @@ function showCalendar(entries, initialPopup, profile, callback) {
             _loop_4(start, end);
         }
     }
-    catch (e_23_1) { e_23 = { error: e_23_1 }; }
+    catch (e_22_1) { e_22 = { error: e_22_1 }; }
     finally {
         try {
             if (_d && !_d.done && (_b = _c.return)) _b.call(_c);
         }
-        finally { if (e_23) throw e_23.error; }
+        finally { if (e_22) throw e_22.error; }
     }
     if (initialPopup != null)
         popup(initialPopup[0], initialPopup[1]);
@@ -1367,7 +1325,7 @@ function group(name, view) {
     return start + "/" + group(rest, v.expand);
 }
 function serializeProfile(profile) {
-    var e_26, _a;
+    var e_25, _a;
     var parts = [];
     try {
         for (var _b = __values(profile.colors.entries()), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -1375,17 +1333,17 @@ function serializeProfile(profile) {
             parts.push(label + "," + colorToHex(color));
         }
     }
-    catch (e_26_1) { e_26 = { error: e_26_1 }; }
+    catch (e_25_1) { e_25 = { error: e_25_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_26) throw e_26.error; }
+        finally { if (e_25) throw e_25.error; }
     }
     return parts.join(';');
 }
 function deserializeProfile(s) {
-    var e_27, _a;
+    var e_26, _a;
     var result = emptyProfile();
     try {
         for (var _b = __values(s.split(';')), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -1397,12 +1355,12 @@ function deserializeProfile(s) {
             result.colors.set(parts[0], colorFromHex(parts[1]));
         }
     }
-    catch (e_27_1) { e_27 = { error: e_27_1 }; }
+    catch (e_26_1) { e_26 = { error: e_26_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_27) throw e_27.error; }
+        finally { if (e_26) throw e_26.error; }
     }
     return result;
 }
@@ -1547,12 +1505,12 @@ function insertAt(toInsert, xs, index) {
     return xs.slice(0, index).concat([toInsert]).concat(xs.slice(index));
 }
 function neighbors(entries, entry) {
-    var e_28, _a;
+    var e_27, _a;
     var before = null;
     var after = null;
     try {
-        for (var entries_2 = __values(entries), entries_2_1 = entries_2.next(); !entries_2_1.done; entries_2_1 = entries_2.next()) {
-            var x = entries_2_1.value;
+        for (var entries_1 = __values(entries), entries_1_1 = entries_1.next(); !entries_1_1.done; entries_1_1 = entries_1.next()) {
+            var x = entries_1_1.value;
             if (x.time < entry.time) {
                 if (before == null || before.time < x.time) {
                     before = x;
@@ -1565,12 +1523,12 @@ function neighbors(entries, entry) {
             }
         }
     }
-    catch (e_28_1) { e_28 = { error: e_28_1 }; }
+    catch (e_27_1) { e_27 = { error: e_27_1 }; }
     finally {
         try {
-            if (entries_2_1 && !entries_2_1.done && (_a = entries_2.return)) _a.call(entries_2);
+            if (entries_1_1 && !entries_1_1.done && (_a = entries_1.return)) _a.call(entries_1);
         }
-        finally { if (e_28) throw e_28.error; }
+        finally { if (e_27) throw e_27.error; }
     }
     return [before, after];
 }
@@ -1584,8 +1542,19 @@ function upsertInPlace(entry, entries) {
     }
     entries.push(entry);
 }
+var DEFAULT_LIMIT = 500;
+function maxEntriesToShow() {
+    var params = new URLSearchParams(window.location.search);
+    var limit = params.get('limit');
+    if (limit == undefined)
+        return DEFAULT_LIMIT;
+    var n = parseInt(limit);
+    if (isNaN(n))
+        return DEFAULT_LIMIT;
+    return n;
+}
 function bulkUpsertInPlace(upserts, entries) {
-    var e_29, _a, e_30, _b;
+    var e_28, _a, e_29, _b;
     var byId = new Map();
     try {
         for (var upserts_1 = __values(upserts), upserts_1_1 = upserts_1.next(); !upserts_1_1.done; upserts_1_1 = upserts_1.next()) {
@@ -1593,12 +1562,12 @@ function bulkUpsertInPlace(upserts, entries) {
             byId.set(upsert.id, upsert);
         }
     }
-    catch (e_29_1) { e_29 = { error: e_29_1 }; }
+    catch (e_28_1) { e_28 = { error: e_28_1 }; }
     finally {
         try {
             if (upserts_1_1 && !upserts_1_1.done && (_a = upserts_1.return)) _a.call(upserts_1);
         }
-        finally { if (e_29) throw e_29.error; }
+        finally { if (e_28) throw e_28.error; }
     }
     for (var i = 0; i < entries.length; i++) {
         var upsert = byId.get(entries[i].id);
@@ -1613,18 +1582,18 @@ function bulkUpsertInPlace(upserts, entries) {
             entries.push(upsert);
         }
     }
-    catch (e_30_1) { e_30 = { error: e_30_1 }; }
+    catch (e_29_1) { e_29 = { error: e_29_1 }; }
     finally {
         try {
             if (_d && !_d.done && (_b = _c.return)) _b.call(_c);
         }
-        finally { if (e_30) throw e_30.error; }
+        finally { if (e_29) throw e_29.error; }
     }
 }
 //Mutates entries in place
 //Also updates in place
 function applyUpdate(update, entries, updates) {
-    var e_31, _a, e_32, _b;
+    var e_30, _a, e_31, _b;
     function upsert(entry) {
         var newEntry = __assign(__assign({}, entry), { lastModified: now() });
         upsertInPlace(newEntry, entries);
@@ -1643,12 +1612,12 @@ function applyUpdate(update, entries, updates) {
                     applyUpdate(u, entries, updates);
                 }
             }
-            catch (e_31_1) { e_31 = { error: e_31_1 }; }
+            catch (e_30_1) { e_30 = { error: e_30_1 }; }
             finally {
                 try {
                     if (_d && !_d.done && (_a = _c.return)) _a.call(_c);
                 }
-                finally { if (e_31) throw e_31.error; }
+                finally { if (e_30) throw e_30.error; }
             }
             break;
         case 'relabel':
@@ -1694,8 +1663,8 @@ function applyUpdate(update, entries, updates) {
             //TODO: make a bulkUpsert method
             var upserts = [];
             try {
-                for (var entries_3 = __values(entries), entries_3_1 = entries_3.next(); !entries_3_1.done; entries_3_1 = entries_3.next()) {
-                    var entry = entries_3_1.value;
+                for (var entries_2 = __values(entries), entries_2_1 = entries_2.next(); !entries_2_1.done; entries_2_1 = entries_2.next()) {
+                    var entry = entries_2_1.value;
                     var newEntry_3 = entry;
                     var changed = false;
                     if (matchesLabelRemap(newEntry_3.before, update.from, update.moveChildren)) {
@@ -1710,14 +1679,33 @@ function applyUpdate(update, entries, updates) {
                         upserts.push(newEntry_3);
                 }
             }
-            catch (e_32_1) { e_32 = { error: e_32_1 }; }
+            catch (e_31_1) { e_31 = { error: e_31_1 }; }
             finally {
                 try {
-                    if (entries_3_1 && !entries_3_1.done && (_b = entries_3.return)) _b.call(entries_3);
+                    if (entries_2_1 && !entries_2_1.done && (_b = entries_2.return)) _b.call(entries_2);
                 }
-                finally { if (e_32) throw e_32.error; }
+                finally { if (e_31) throw e_31.error; }
             }
             bulkUpsert(upserts);
+            break;
+        case 'delete':
+            upsert(__assign(__assign({}, update.entry), { deleted: true }));
+            if (update.entry.before !== undefined) {
+                if (update.shiftForward !== undefined) {
+                    upsert(__assign(__assign({}, update.shiftForward), { before: update.entry.before }));
+                }
+                if (update.reflectBack !== undefined) {
+                    upsert(__assign(__assign({}, update.reflectBack), { after: update.entry.before }));
+                }
+            }
+            if (update.entry.after !== undefined) {
+                if (update.shiftBack !== undefined) {
+                    upsert(__assign(__assign({}, update.shiftBack), { after: update.entry.after }));
+                }
+                if (update.reflectForward !== undefined) {
+                    upsert(__assign(__assign({}, update.reflectForward), { before: update.entry.after }));
+                }
+            }
             break;
         default: assertNever(update);
     }
@@ -1745,8 +1733,8 @@ function remapLabel(label, from, to, moveChildren) {
     }
 }
 function listPairsAndEnds(xs) {
-    var a, b, xs_2, xs_2_1, x, e_33_1;
-    var e_33, _a;
+    var a, b, xs_2, xs_2_1, x, e_32_1;
+    var e_32, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -1771,14 +1759,14 @@ function listPairsAndEnds(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_33_1 = _b.sent();
-                e_33 = { error: e_33_1 };
+                e_32_1 = _b.sent();
+                e_32 = { error: e_32_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_2_1 && !xs_2_1.done && (_a = xs_2.return)) _a.call(xs_2);
                 }
-                finally { if (e_33) throw e_33.error; }
+                finally { if (e_32) throw e_32.error; }
                 return [7 /*endfinally*/];
             case 8:
                 if (!(b != null)) return [3 /*break*/, 10];
@@ -1791,8 +1779,8 @@ function listPairsAndEnds(xs) {
     });
 }
 function listPairs(xs) {
-    var _a, _b, _c, x, y, e_34_1;
-    var e_34, _d;
+    var _a, _b, _c, x, y, e_33_1;
+    var e_33, _d;
     return __generator(this, function (_e) {
         switch (_e.label) {
             case 0:
@@ -1812,22 +1800,22 @@ function listPairs(xs) {
                 return [3 /*break*/, 1];
             case 4: return [3 /*break*/, 7];
             case 5:
-                e_34_1 = _e.sent();
-                e_34 = { error: e_34_1 };
+                e_33_1 = _e.sent();
+                e_33 = { error: e_33_1 };
                 return [3 /*break*/, 7];
             case 6:
                 try {
                     if (_b && !_b.done && (_d = _a.return)) _d.call(_a);
                 }
-                finally { if (e_34) throw e_34.error; }
+                finally { if (e_33) throw e_33.error; }
                 return [7 /*endfinally*/];
             case 7: return [2 /*return*/];
         }
     });
 }
 function enumerate(xs) {
-    var i, xs_3, xs_3_1, x, e_35_1;
-    var e_35, _a;
+    var i, xs_3, xs_3_1, x, e_34_1;
+    var e_34, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -1850,14 +1838,14 @@ function enumerate(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_35_1 = _b.sent();
-                e_35 = { error: e_35_1 };
+                e_34_1 = _b.sent();
+                e_34 = { error: e_34_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_3_1 && !xs_3_1.done && (_a = xs_3.return)) _a.call(xs_3);
                 }
-                finally { if (e_35) throw e_35.error; }
+                finally { if (e_34) throw e_34.error; }
                 return [7 /*endfinally*/];
             case 8: return [2 /*return*/];
         }
@@ -1906,8 +1894,8 @@ function revit(xs, limit) {
 }
 //Returns the same set of elements, but with booleans flagging first and last
 function markTails(xs) {
-    var first, next, start, xs_4, xs_4_1, x, e_36_1;
-    var e_36, _a;
+    var first, next, start, xs_4, xs_4_1, x, e_35_1;
+    var e_35, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -1938,14 +1926,14 @@ function markTails(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_36_1 = _b.sent();
-                e_36 = { error: e_36_1 };
+                e_35_1 = _b.sent();
+                e_35 = { error: e_35_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_4_1 && !xs_4_1.done && (_a = xs_4.return)) _a.call(xs_4);
                 }
-                finally { if (e_36) throw e_36.error; }
+                finally { if (e_35) throw e_35.error; }
                 return [7 /*endfinally*/];
             case 8: return [4 /*yield*/, [first, true, next]];
             case 9:
@@ -2117,22 +2105,22 @@ function hash(s) {
 //Gives the merged list of updates, as well as updates that you'd have to apply to either side
 //to bring it up to merged
 export function mergeAndUpdate(xs, ys) {
-    var e_37, _a, e_38, _b;
+    var e_36, _a, e_37, _b;
     function makeMap(entries) {
-        var e_39, _a;
+        var e_38, _a;
         var result = new Map();
         try {
-            for (var entries_4 = __values(entries), entries_4_1 = entries_4.next(); !entries_4_1.done; entries_4_1 = entries_4.next()) {
-                var entry = entries_4_1.value;
+            for (var entries_3 = __values(entries), entries_3_1 = entries_3.next(); !entries_3_1.done; entries_3_1 = entries_3.next()) {
+                var entry = entries_3_1.value;
                 result.set(entry.id, entry);
             }
         }
-        catch (e_39_1) { e_39 = { error: e_39_1 }; }
+        catch (e_38_1) { e_38 = { error: e_38_1 }; }
         finally {
             try {
-                if (entries_4_1 && !entries_4_1.done && (_a = entries_4.return)) _a.call(entries_4);
+                if (entries_3_1 && !entries_3_1.done && (_a = entries_3.return)) _a.call(entries_3);
             }
-            finally { if (e_39) throw e_39.error; }
+            finally { if (e_38) throw e_38.error; }
         }
         return result;
     }
@@ -2154,12 +2142,12 @@ export function mergeAndUpdate(xs, ys) {
             }
         }
     }
-    catch (e_37_1) { e_37 = { error: e_37_1 }; }
+    catch (e_36_1) { e_36 = { error: e_36_1 }; }
     finally {
         try {
             if (xs_5_1 && !xs_5_1.done && (_a = xs_5.return)) _a.call(xs_5);
         }
-        finally { if (e_37) throw e_37.error; }
+        finally { if (e_36) throw e_36.error; }
     }
     try {
         for (var ys_1 = __values(ys), ys_1_1 = ys_1.next(); !ys_1_1.done; ys_1_1 = ys_1.next()) {
@@ -2171,12 +2159,12 @@ export function mergeAndUpdate(xs, ys) {
             }
         }
     }
-    catch (e_38_1) { e_38 = { error: e_38_1 }; }
+    catch (e_37_1) { e_37 = { error: e_37_1 }; }
     finally {
         try {
             if (ys_1_1 && !ys_1_1.done && (_b = ys_1.return)) _b.call(ys_1);
         }
-        finally { if (e_38) throw e_38.error; }
+        finally { if (e_37) throw e_37.error; }
     }
     return { merged: merged, xUpdates: xUpdates, yUpdates: yUpdates };
 }
@@ -2228,29 +2216,41 @@ function matchLabel(category, label) {
     else
         return null;
 }
-function makeReport(entries, start, end, topLabel) {
-    var e_40, _a;
+function makeReport(entries, start, end, topLabels) {
+    var e_39, _a, e_40, _b;
     entries = sortAndFilter(entries);
     var result = {};
     try {
-        for (var _b = __values(listPairs(it(entries))), _c = _b.next(); !_c.done; _c = _b.next()) {
-            var _d = __read(_c.value, 2), e0 = _d[0], e1 = _d[1];
+        for (var _c = __values(listPairs(it(entries))), _d = _c.next(); !_d.done; _d = _c.next()) {
+            var _e = __read(_d.value, 2), e0 = _e[0], e1 = _e[1];
             if (e1.time > start && e0.time < end) {
                 var t0 = last(e0.time, start);
                 var t1 = first(e1.time, end);
                 var label = labelFrom(e0, e1);
-                var subLabel = matchLabel(topLabel, label);
-                if (t0 != t1 && subLabel != null)
-                    addToReport(subLabel, t1.getTime() - t0.getTime(), result);
+                try {
+                    for (var topLabels_1 = (e_40 = void 0, __values(topLabels)), topLabels_1_1 = topLabels_1.next(); !topLabels_1_1.done; topLabels_1_1 = topLabels_1.next()) {
+                        var topLabel = topLabels_1_1.value;
+                        var subLabel = matchLabel(topLabel, label);
+                        if (t0 != t1 && subLabel != null)
+                            addToReport(label, t1.getTime() - t0.getTime(), result);
+                    }
+                }
+                catch (e_40_1) { e_40 = { error: e_40_1 }; }
+                finally {
+                    try {
+                        if (topLabels_1_1 && !topLabels_1_1.done && (_b = topLabels_1.return)) _b.call(topLabels_1);
+                    }
+                    finally { if (e_40) throw e_40.error; }
+                }
             }
         }
     }
-    catch (e_40_1) { e_40 = { error: e_40_1 }; }
+    catch (e_39_1) { e_39 = { error: e_39_1 }; }
     finally {
         try {
-            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+            if (_d && !_d.done && (_a = _c.return)) _a.call(_c);
         }
-        finally { if (e_40) throw e_40.error; }
+        finally { if (e_39) throw e_39.error; }
     }
     return result;
 }
@@ -2272,54 +2272,52 @@ function reportToString(report) {
     }
     return "{" + parts.join(',') + "}";
 }
-/*
-function renderReport(report:Report, prefix:string = '', indentation:number=0): JQE {
-    const result = $('<ul></ul>')
-    for (const [label, [time, sub]] of Object.entries(report)) {
-        const e = $(`<li>[${renderDuration(time)}] ${label}</li>`)
-        e.append(renderReport(sub, `${prefix}${label}/`, indentation+1))
-        result.append(e)
-    }
-    return result
+function serializeReport(report) {
+    return JSON.stringify(report);
 }
-*/
-function len(x) {
-    return Object.keys(x).length;
-}
-// Compress paths (with no branches) into single steps
-export function flattenReport(report) {
+function purifyReport(impure) {
     var e_42, _a;
-    var entries = Object.entries(report);
     var result = {};
     try {
-        for (var entries_5 = __values(entries), entries_5_1 = entries_5.next(); !entries_5_1.done; entries_5_1 = entries_5.next()) {
-            var _b = __read(entries_5_1.value, 2), label = _b[0], _c = __read(_b[1], 2), time = _c[0], sub = _c[1];
-            var flatSub = flattenReport(sub);
-            var subEntries = Object.entries(flatSub);
-            if (subEntries.length == 1 && subEntries[0][1][0] == time) {
-                result[label + "/" + subEntries[0][0]] = subEntries[0][1];
+        for (var _b = __values(Object.entries(impure)), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var _d = __read(_c.value, 2), a = _d[0], b = _d[1];
+            if (Array.isArray(b) && b.length == 2) {
+                var _e = __read(b, 2), x = _e[0], y = _e[1];
+                if (typeof (x) == 'number') {
+                    result[a] = [x, purifyReport(y)];
+                }
+                else {
+                    console.error("Failed to parse report because " + x + " is not a number.");
+                }
             }
             else {
-                result[label] = [time, flatSub];
+                console.error("Failed to parse report because " + b + " is not an array of length 2.");
             }
         }
     }
     catch (e_42_1) { e_42 = { error: e_42_1 }; }
     finally {
         try {
-            if (entries_5_1 && !entries_5_1.done && (_a = entries_5.return)) _a.call(entries_5);
+            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
         finally { if (e_42) throw e_42.error; }
     }
     return result;
 }
-function totalReportTime(report) {
+export function deserializeReport(s) {
+    var result = JSON.parse(s);
+    return purifyReport(result);
+}
+function len(x) {
+    return Object.keys(x).length;
+}
+function total(x) {
     var e_43, _a;
     var result = 0;
     try {
-        for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
-            var _d = __read(_c.value, 2), label = _d[0], _e = __read(_d[1], 2), time = _e[0], sub = _e[1];
-            result += time;
+        for (var _b = __values(Object.values(x)), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var _d = __read(_c.value, 2), t = _d[0], r = _d[1];
+            result += t;
         }
     }
     catch (e_43_1) { e_43 = { error: e_43_1 }; }
@@ -2331,70 +2329,171 @@ function totalReportTime(report) {
     }
     return result;
 }
-function renderPercentage(x) {
-    return Math.round(x * 100) + "%";
-}
-function renderReportLine(label, time, fraction, hasChildren) {
-    var childString = (hasChildren) ? ' (+)' : '';
-    var childClass = (hasChildren) ? ' clickable' : '';
-    return $("<div class='ReportLine" + childClass + "'>[" + renderDuration(time) + "] " + label + childString + "</div>");
-    //return $(`<div class="reportLine"><span>${label}</span><span>${renderDuration(time)}</span><span>${renderPercentage(fraction)}</span></div>`)
-}
-function renderReport(report, prefix, indentation, total) {
-    var e_44, _a, e_45, _b;
-    if (prefix === void 0) { prefix = ''; }
-    if (indentation === void 0) { indentation = 0; }
-    if (total === void 0) { total = null; }
-    var totalNotNull = (total === null) ? totalReportTime(report) : total;
-    var result = $('<div class="indent"></div>');
-    function renderLineAndChildren(label, time, sub) {
-        var hasChildren = Object.keys(sub).length > 0;
-        var head = renderReportLine(label, time, time / totalNotNull, hasChildren);
-        var result = [head];
-        if (hasChildren) {
-            var child_1 = renderReport(sub, "" + prefix + label + "/", indentation + 1);
-            var visible_1 = false;
-            head.click(function () {
-                if (visible_1) {
-                    visible_1 = false;
-                    child_1.hide();
-                }
-                else {
-                    visible_1 = true;
-                    child_1.show();
-                }
-            });
-            child_1.hide();
-            result.push(child_1);
-        }
-        return result;
-    }
+// Compress paths (with no branches) into single steps
+export function flattenReport(report) {
+    var e_44, _a;
     var entries = Object.entries(report);
-    entries.sort(function (x, y) { return y[1][0] - x[1][0]; });
+    var result = {};
     try {
-        for (var entries_6 = __values(entries), entries_6_1 = entries_6.next(); !entries_6_1.done; entries_6_1 = entries_6.next()) {
-            var _c = __read(entries_6_1.value, 2), label = _c[0], _d = __read(_c[1], 2), time = _d[0], sub = _d[1];
-            try {
-                for (var _e = (e_45 = void 0, __values(renderLineAndChildren(label, time, sub))), _f = _e.next(); !_f.done; _f = _e.next()) {
-                    var e_46 = _f.value;
-                    result.append(e_46);
-                }
+        for (var entries_4 = __values(entries), entries_4_1 = entries_4.next(); !entries_4_1.done; entries_4_1 = entries_4.next()) {
+            var _b = __read(entries_4_1.value, 2), label = _b[0], _c = __read(_b[1], 2), time = _c[0], sub = _c[1];
+            var flatSub = flattenReport(sub);
+            var subEntries = Object.entries(flatSub);
+            if (subEntries.length == 1 && subEntries[0][1][0] == time) {
+                result[label + "/" + subEntries[0][0]] = subEntries[0][1];
             }
-            catch (e_45_1) { e_45 = { error: e_45_1 }; }
-            finally {
-                try {
-                    if (_f && !_f.done && (_b = _e.return)) _b.call(_e);
-                }
-                finally { if (e_45) throw e_45.error; }
+            else {
+                result[label] = [time, flatSub];
             }
         }
     }
     catch (e_44_1) { e_44 = { error: e_44_1 }; }
     finally {
         try {
-            if (entries_6_1 && !entries_6_1.done && (_a = entries_6.return)) _a.call(entries_6);
+            if (entries_4_1 && !entries_4_1.done && (_a = entries_4.return)) _a.call(entries_4);
         }
         finally { if (e_44) throw e_44.error; }
+    }
+    return result;
+}
+var TOTAL = 'total';
+// If there are multiple top level parts in the report, put a "Total" category on top
+// This seems like the wrong report semantics, but whatever
+function capReport(report) {
+    if (len(report) == 1)
+        return report;
+    var result = {};
+    result[TOTAL] = [total(report), report];
+    return result;
+}
+function totalReportTime(report) {
+    var e_45, _a;
+    var result = 0;
+    try {
+        for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var _d = __read(_c.value, 2), label = _d[0], _e = __read(_d[1], 2), time = _e[0], sub = _e[1];
+            result += time;
+        }
+    }
+    catch (e_45_1) { e_45 = { error: e_45_1 }; }
+    finally {
+        try {
+            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+        }
+        finally { if (e_45) throw e_45.error; }
+    }
+    return result;
+}
+function renderPercentage(x) {
+    return Math.round(x * 100) + "%";
+}
+function renderColorPicker(label, profile) {
+    var picker = document.createElement('input');
+    picker.setAttribute('type', 'color');
+    picker.setAttribute('class', 'colorpicker');
+    var colorHex = colorToHex(getColor(label, profile));
+    picker.setAttribute('value', colorHex);
+    picker.addEventListener('change', function () {
+        console.log(picker.value);
+        profile.colors.set(label, colorFromHex(picker.value));
+        saveProfile(profile);
+    });
+    return picker;
+}
+function renderReportLine(label, time, onClick, hasChildren, fullLabel, editParams) {
+    if (editParams === void 0) { editParams = null; }
+    var childString = (hasChildren) ? ' (+)' : '';
+    var childClass = (hasChildren) ? ' clickable' : '';
+    var result = div('ReportLine');
+    var lineText = spanText("reportLineText" + (hasChildren ? ' clickable' : ''), "[" + renderDuration(time) + "] " + label + childString);
+    lineText.addEventListener('click', onClick);
+    result.append(lineText);
+    if (editParams != null) {
+        var renameLink = spanText('renameButton clickable', '[rename]');
+        renameLink.addEventListener('click', function () {
+            labelPopup(fullLabel, editParams.callback, editParams.entries);
+        });
+        var picker = renderColorPicker(fullLabel, editParams.profile);
+        result.append(picker, renameLink);
+    }
+    return result;
+    //return $(`<div class="reportLine"><span>${label}</span><span>${renderDuration(time)}</span><span>${renderPercentage(fraction)}</span></div>`)
+}
+function makeEditParams(entries, credentials) {
+    function callback(update) {
+        applyAndSave(entries, update, credentials);
+    }
+    return { profile: loadProfile(), callback: callback, entries: entries };
+}
+function joinPrefix(prefix, label) {
+    if (prefix == TOTAL || prefix.length == 0)
+        return label;
+    return prefix + "/" + label;
+}
+function renderReport(report, editParams, indentation, total, expanded, prefix, profile) {
+    var e_46, _a, e_47, _b;
+    if (editParams === void 0) { editParams = null; }
+    if (indentation === void 0) { indentation = 0; }
+    if (total === void 0) { total = null; }
+    if (expanded === void 0) { expanded = true; }
+    if (prefix === void 0) { prefix = ''; }
+    if (profile === void 0) { profile = loadProfile(); }
+    var totalNotNull = (total === null) ? totalReportTime(report) : total;
+    var result = div('indent');
+    function renderLineAndChildren(label, time, sub) {
+        var hasChildren = Object.keys(sub).length > 0;
+        var result = [];
+        var fullLabel = joinPrefix(prefix, label);
+        var showChildren = function () { };
+        if (hasChildren) {
+            var child_1 = renderReport(sub, editParams, indentation + 1, total, false, fullLabel, profile);
+            var visible_1 = true;
+            if (!expanded) {
+                child_1.hidden = true;
+                visible_1 = false;
+            }
+            showChildren = function () {
+                if (visible_1) {
+                    visible_1 = false;
+                    child_1.hidden = true;
+                }
+                else {
+                    visible_1 = true;
+                    child_1.hidden = false;
+                }
+            };
+            result.push(child_1);
+        }
+        var head = renderReportLine(label, time, showChildren, hasChildren, fullLabel, editParams);
+        result.unshift(head);
+        return result;
+    }
+    var entries = Object.entries(report);
+    entries.sort(function (x, y) { return y[1][0] - x[1][0]; });
+    try {
+        for (var entries_5 = __values(entries), entries_5_1 = entries_5.next(); !entries_5_1.done; entries_5_1 = entries_5.next()) {
+            var _c = __read(entries_5_1.value, 2), label = _c[0], _d = __read(_c[1], 2), time = _d[0], sub = _d[1];
+            try {
+                for (var _e = (e_47 = void 0, __values(renderLineAndChildren(label, time, sub))), _f = _e.next(); !_f.done; _f = _e.next()) {
+                    var e_48 = _f.value;
+                    result.append(e_48);
+                }
+            }
+            catch (e_47_1) { e_47 = { error: e_47_1 }; }
+            finally {
+                try {
+                    if (_f && !_f.done && (_b = _e.return)) _b.call(_e);
+                }
+                finally { if (e_47) throw e_47.error; }
+            }
+        }
+    }
+    catch (e_46_1) { e_46 = { error: e_46_1 }; }
+    finally {
+        try {
+            if (entries_5_1 && !entries_5_1.done && (_a = entries_5.return)) _a.call(entries_5);
+        }
+        finally { if (e_46) throw e_46.error; }
     }
     return result;
 }
@@ -2431,26 +2530,29 @@ export function loadReport() {
                 render(paramsFromInput());
             }
         }
-        function render(params) {
+        function reportFromParams(params) {
             var startParse = parseString(dateRule, params.start || 'start today');
             var endParse = parseString(dateRule, params.end || 'now');
-            var label = params.label || '';
+            var labels = (params.label == undefined) ? [''] : params.label.split(',').map(function (x) { return x.trim(); });
             if (startParse == 'fail' || startParse == 'prefix')
-                return;
+                return null;
             if (endParse == 'fail' || endParse == 'prefix')
-                return;
+                return null;
             var startDate = startParse[0];
             var endDate = endParse[0];
             window.history.pushState(null, "", "report.html?" + renderParams(params));
             $('#startDate').val(params.start || '');
             $('#endDate').val(params.end || '');
             $('#topLabel').val(params.label || '');
-            var report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), label);
-            $('#reportContainer').empty();
-            //debugger;
-            $('#reportContainer').append(renderReport(flattenReport(report)));
+            var report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels);
+            return capReport(flattenReport(report));
         }
-        var credentials, entries, profile;
+        function render(params) {
+            var report = reportFromParams(params);
+            if (report != null)
+                displayReport(report, editParams);
+        }
+        var credentials, entries, editParams;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
@@ -2459,12 +2561,19 @@ export function loadReport() {
                     return [4 /*yield*/, loadEntries(credentials)];
                 case 2:
                     entries = _a.sent();
-                    profile = loadProfile();
+                    editParams = makeEditParams(entries, credentials);
                     $('.reportParamInput').keydown(kd);
                     window.addEventListener('popstate', function (event) {
                         render(paramsFromURL(window.location.href));
                     });
                     $('#generate').click(function () { return render(paramsFromInput()); });
+                    $('#export').click(function () {
+                        var report = reportFromParams(paramsFromInput());
+                        if (report != null) {
+                            displayReport(report, editParams);
+                            exportReport(report);
+                        }
+                    });
                     $('#startDate').val('start today');
                     $('#endDate').val('now');
                     render(paramsFromURL(window.location.href));
@@ -2472,5 +2581,67 @@ export function loadReport() {
             }
         });
     });
+}
+function baseURL() {
+    var url = window.location;
+    return url.protocol + '//' + url.host;
+}
+function exportReport(report) {
+    $('#exportPopup').attr('active', 'true');
+    $('#exportPopup').html("<label for=\"link\">Link:</label>" +
+        "<textarea id=\"link\"></textarea>" +
+        "<div>" +
+        "<span class=\"option\" choosable id=\"copyLink\">Copy (\u23CE)</span>" +
+        "<span class=\"option\" choosable id=\"cancel\">Cancel (esc)</span>" +
+        "</div>");
+    var id = randomLinkID();
+    //TOOD: include base URL
+    $('#link').val(baseURL() + "/r/" + id);
+    $('#link').select();
+    var serialized = serializeReport(report);
+    console.log(serialized);
+    $.get("export?id=" + id + "&serialized=" + encodeURIComponent(serialized)).done(function (x) {
+        if (x != 'ok') {
+            alert(x);
+        }
+    });
+    function exit() {
+        $('#link').blur();
+        $('#exportPopup').attr('active', 'false');
+    }
+    function submit() {
+        $('#link').select();
+        document.execCommand('copy');
+        exit();
+    }
+    $('#cancel').click(exit);
+    $('#copyLink').click(submit);
+    $('#link').keydown(function (e) {
+        if (e.keyCode == 27) {
+            exit();
+            e.preventDefault();
+        }
+        else if (e.keyCode == 13) {
+            submit();
+            e.preventDefault();
+        }
+    });
+}
+// Used in viewReport.ejs as well as from loadReport()
+export function displayReport(report, editParams) {
+    if (editParams != null) {
+        var f_1 = editParams.callback;
+        editParams.callback = function (update) {
+            f_1(update);
+            displayReport(report, editParams);
+        };
+    }
+    $('#reportContainer').empty();
+    //const editable = (document.getElementById('editableReport') as HTMLInputElement)
+    $('#reportContainer').append(renderReport(capReport(flattenReport(report)), null //editable.checked ? editParams : null
+    ));
+}
+function randomLinkID() {
+    return Math.random().toString(36).substring(2, 8);
 }
 //# sourceMappingURL=track.js.map

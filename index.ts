@@ -6,9 +6,11 @@ const PORT = process.env.PORT || 5000
 import {Entry, serializeEntries, deserializeEntries} from './public/entries.js'
 
 import postgres from 'postgres'
-const sql = (process.env.DATABASE_URL == undefined) ? null : postgres(
-    process.env.DATABASE_URL,
-    {ssl: {rejectUnauthorized: false}}
+const db_url = process.env.DATABASE_URL
+const runningLocally = (db_url == undefined || db_url.search('localhost') > 0)
+const sql = postgres(
+    db_url,
+    runningLocally ? {} : {ssl: {rejectUnauthorized: false}}
 )
 
 export type Credentials = {username: string, hashedPassword: string}
@@ -67,6 +69,8 @@ const app = express()
 app.use(bodyParser.urlencoded({extended: false}))
 
 app
+    .set('view engine', 'ejs')
+    .set('views', './views')
     .get('/test', async (req: any, res: any) => {
         res.send('Hello, world!')
     })
@@ -142,5 +146,27 @@ app
         } catch (e) {
             res.send(e)
         }
+    })
+    .get('/export', async (req: any, res:any) => {
+        const id = req.query.id;
+        try{
+          const results = await sql`
+            INSERT INTO reports (id, serialized)
+            VALUES (${id}, ${decodeURIComponent(req.query.serialized)})
+          `
+          res.send('ok')
+        } catch(err) {
+          res.send(err)
+        }
+    })
+    .get('/r/:id', async (req:any, res:any) => {
+        const result = await sql`
+            SELECT serialized FROM reports
+            WHERE id = ${req.params.id}
+        `
+        if (result.length < 1) res.send('Report not found')
+        console.log('!')
+        console.log(result)
+        res.render('viewReport', {report: encodeURIComponent(result[0].serialized)}) 
     })
     .listen(PORT, () => console.log(`Listening on ${ PORT }`))

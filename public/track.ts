@@ -1,7 +1,7 @@
 import e from 'express'
 import { Callbacks, data, map, readyException } from 'jquery'
 import { InputBox } from './suggester.js'
-import { DateSpec, Action, dateRule, parseString } from './parse.js'
+import { DateSpec, Action, dateRule, parseString, actionRule, emptyRule } from './parse.js'
 import { Entry, Label, serializeEntries, deserializeEntries, uid, newUID, makeNewEntry } from './entries.js'
 
 
@@ -29,13 +29,19 @@ function calendarSpan(
 }
 
 
-function labelPopup(label:Label, callback:(update:TimeUpdate) => void): void {
-    $('#popup').attr('active', 'true')
+function labelPopup(label:Label, callback:(update:TimeUpdate) => void, entries:Entry[]): void {
+    $('#renamePopup').attr('active', 'true')
     $('#popuplabel').text(label)
     $('#newlabel').empty()
-    $('#newlabel').append(inputAfterColon('Rename to', '', function(s) {
+    $('#newlabel').html('Rename to: ')
+    const e = div('inputwrapper')
+    $('#newlabel').append(e)
+    const input = new InputBox(emptyRule, null, getDistinctLabels(entries), $(e))
+    input.bind(function (a, s) {
         callback({kind: 'bulkRename', from: label, to: s, moveChildren: $('#movechildren').prop('checked')})
-    }))
+        hideLabelPopup()
+    })
+    input.focus()
     $('#movechildren').prop('checked', true)
 }
 
@@ -97,18 +103,18 @@ function zoomedPopup(
             $('#minical').append(elem)
         }
     }
-    const input = new InputBox(getDistinctLabels(entries), $('.inputwrapper'))
+    const input = new InputBox(actionRule, {kind: 'raw'}, getDistinctLabels(entries), $('.inputwrapper'))
     input.bind((a, s) => {
         switch (a.kind) {
             case 'raw':
                 callback({kind: 'relabel', label: s, before: entries[endIndex-1], after: entries[endIndex]})
                 break
-            case 'number':
+            case 'default':
                 callback({
                     kind: 'split',
                     before: entries[endIndex-1],
                     after: entries[endIndex],
-                    time: minutesAfter(entries[endIndex-1].time, a.number),
+                    time: minutesAfter(entries[endIndex-1].time, a.minutes),
                     labelBefore: s
                 })
                 break
@@ -117,6 +123,15 @@ function zoomedPopup(
                     kind: 'split',
                     before: entries[endIndex-1],
                     after: entries[endIndex],
+                    time: minutesAfter(entries[endIndex].time, -a.minutes),
+                    labelAfter: s
+                })
+                break
+            case 'except':
+                callback({
+                    kind: 'split',
+                    before: entries[startIndex],
+                    after: entries[startIndex+1],
                     time: minutesAfter(entries[endIndex].time, -a.minutes),
                     labelAfter: s
                 })
@@ -143,11 +158,14 @@ function zoomedPopup(
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex+1],
-                    time: specToDate(a.time, entries[startIndex].time, 'next'),
+                    time: specToDate(a.time, entries[startIndex+1].time, 'previous'),
                     labelAfter: s
                 })
                 break
             case 'now':
+                break
+            case 'continue':
+                callback({kind: 'delete', entry: entries[startIndex], shiftForward: entries[startIndex+1]})
                 break
             default: assertNever(a)
         }
@@ -212,18 +230,19 @@ function twoDigits(n:number): string {
 
 function specToDate(spec:DateSpec, anchor:Date, rel:'next'|'previous'|'closest'): Date {
     if (spec == 'now') return now()
-    const candidate = new Date(anchor)
-    candidate.setMinutes(spec.minutes)
+    const copiedAnchor = new Date(anchor)
+    copiedAnchor.setMinutes(spec.minutes)
     let best:Date = new Date(anchor);
     let bestDiff:number|null = null;
     const month = (spec.month === undefined) ? anchor.getMonth() : spec.month
-    candidate.setMonth(month)
+    copiedAnchor.setMonth(month)
     const hours:number = (spec.hours == 12) ? 0 : spec.hours
     const dateCandidates:number[] = (spec.day === undefined) ? [-1, 0, 1].map(x => anchor.getDate() + x) : [spec.day]
     const ampmCandidates:('am'|'pm')[] = (spec.ampm === undefined) ? ['am', 'pm'] : [spec.ampm]
     const hourCandidates:number[] = ampmCandidates.map(x => (x == 'am') ? hours : (hours+12)%24)
     for (const date of dateCandidates) {
         for (const hours of hourCandidates) {
+            const candidate = new Date(copiedAnchor)
             candidate.setDate(date)
             candidate.setHours(hours)
             const diff = candidate.getTime() - anchor.getTime()
@@ -265,16 +284,17 @@ export async function loadTracker(): Promise<void> {
         entries.push(makeNewEntry(now(), undefined, undefined))
         saveEntries(entries)
     }
-    sortEntries(entries)
     let focused:Entry|null = null;
+    const entriesToShow = maxEntriesToShow()
     function callback(update:TimeUpdate) {
         applyAndSave(entries, update, credentials)
         render()
     }
-    function startInput(elem:HTMLDivElement, start:Entry, end:Entry|null): void {
+    function startInput(elem:HTMLDivElement, startIndex:number, entries:Entry[]): InputBox<Action> {
         $('.inputwrapper').empty()
-        const x = new InputBox(getDistinctLabels(entries), $(elem))
-        x.focus()
+        const x = new InputBox(actionRule, {kind: 'raw'}, getDistinctLabels(entries), $(elem))
+        const start:Entry = entries[startIndex]
+        const end:Entry|null = (startIndex < entries.length - 1) ? entries[startIndex+1] : null
         if (end == null) {
             x.bind((a, s) => {
                 switch (a.kind) {
@@ -291,8 +311,14 @@ export async function loadTracker(): Promise<void> {
                             {kind: 'append', time:new Date(), before:s}
                         ]})
                         break
-                    case 'number':
-                        callback({kind: 'append', before: s, time: minutesAfter(start.time, a.number)})
+                    case 'except':
+                        callback({kind: 'composite', updates: [
+                            {kind: 'append', time: minutesAfter(start.time, a.minutes), after:s},
+                            {kind: 'append', time:new Date(), before:s}
+                        ]})
+                        break
+                    case 'default':
+                        callback({kind: 'append', before: s, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'now':
                         callback({kind: 'relabel', label: s, before:start})
@@ -302,6 +328,9 @@ export async function loadTracker(): Promise<void> {
                         break  
                     case 'after':
                         callback({kind: 'append', after: s, time: specToDate(a.time, new Date(), 'previous')})
+                        break
+                    case 'continue':
+                        callback({kind: 'delete', entry: start, reflectBack: (startIndex > 0) ? entries[startIndex-1] : undefined})
                         break
                     default: assertNever(a)
                 }
@@ -317,22 +346,29 @@ export async function loadTracker(): Promise<void> {
                         break
                     case 'now':
                         break
-                    case 'number':
-                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.number)})
+                    case 'default':
+                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'last':
                         callback({kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
+                        break
+                    case 'except':
+                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
                         break
                     case 'until':
                         callback({kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next')})
                         break
                     case 'after':
-                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: specToDate(a.time, start.time, 'next')})
+                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: specToDate(a.time, end.time, 'previous')})
+                        break
+                    case 'continue':
+                        callback({kind: 'delete', entry: start, shiftForward: end})
                         break
                     default: assertNever(a)
                 }
             })
         }
+        return x
     }
     let heartbeats:[Date, HTMLDivElement][] = []
     function setTimer(start:Date, elem:HTMLDivElement): void {
@@ -347,25 +383,20 @@ export async function loadTracker(): Promise<void> {
     }, 1000)
     function render() {
         heartbeats = []
-        const toStart:Array<[HTMLDivElement, Entry, Entry|null]> = [];
+        const toStart:Array<() => void> = [];
         const elem = document.getElementById('inputs')
         const elements:HTMLDivElement[] = []
         if (elem != null) elem.innerHTML = ''
         const sortedEntries = sortAndFilter(entries)
-        for (const [end, start] of listPairsAndEnds(revit(sortedEntries, 500))) {
-            //end = entries[i]
+        for (let i = sortedEntries.length-1; i >= 0 && i >= sortedEntries.length - entriesToShow; i--) {
+            const end:Entry|null = (i == sortedEntries.length - 1) ? null : sortedEntries[i+1]
+            const start:Entry|null = sortedEntries[i]
             if (end == null) {
                 const row = div('trackertimerow')
                 row.appendChild(div('nowdot'))
                 row.appendChild(div('timelabel'))
                 elements.push(row)
             } else {
-                /*
-                const e = $(`<span class='clickable'>[${renderTime(end.time)}]</span>`)
-                const f = $('<div></div>')
-                f.append(e)
-                elem.append(f)
-                */
                 const row = div('trackertimerow')
                 row.appendChild(div('dot'))
                 const time = div('timelabel')
@@ -386,7 +417,6 @@ export async function loadTracker(): Promise<void> {
                 row.appendChild(time)
                 elements.push(row)
             }
-            //TODO unify these two cases
             if (start != null) {
                 const label = (end == null) ? start.after || 'TBD' : labelFrom(start, end)
                 const color:string = (end == null) ? 'gray' : renderColor(getColor(label, profile))
@@ -411,17 +441,18 @@ export async function loadTracker(): Promise<void> {
                 inputBuffer.appendChild(inputWrapper)
                 row.append(inputBuffer)
                 text.addEventListener('click', () => {
-                    startInput(inputWrapper, start, end)
+                    startInput(inputWrapper, i, sortedEntries).focus()
                     focused = end;
                 })
                 elements.push(row)
-                if (focused == end) toStart.push([inputWrapper, start, end])
+                if (focused == end) {
+                    const inputBox = startInput(inputWrapper, i, sortedEntries)
+                    toStart.push(() => inputBox.focus())
+                }
             }
         }
         if (elem != null) elem.append(...elements)
-        for (const [inputWrapper, start, end] of toStart) {
-            startInput(inputWrapper, start, end)
-        }
+        for (const f of toStart) f()
     }
     render()
 }
@@ -515,78 +546,6 @@ function renderBars(entries:Entry[], buckets:Bucket[], profile:Profile) {
         },
         data: data
     })
-   /*
-   var chart = new CanvasJS.Chart("chartContainer", {
-	animationEnabled: true,
-    title: {},
-	axisX: {
-		interval: 1,
-	},
-	axisY:{
-		valueFormatString:"#0h",
-	},
-	data: [{
-		type: "stackedColumn",
-		showInLegend: true,
-		color: "#696661",
-		name: "Q1",
-		dataPoints: [
-			{ y: 6.75, x: 0},
-			{ y: 8.57, x: 1 },
-			{ y: 10.64, x: 2 },
-			{ y: 13.97, x: 3 },
-			{ y: 15.42, x: 4 },
-			{ y: 17.26, x: 5 },
-			{ y: 20.26, x: 6 }
-		]
-		},
-		{        
-			type: "stackedColumn",
-			showInLegend: true,
-			name: "Q2",
-			color: "#EDCA93",
-			dataPoints: [
-				{ y: 6.82, x: 0},
-				{ y: 9.02, x: 1 },
-				{ y: 11.80, x: 2 },
-				{ y: 14.11, x: 3 },
-				{ y: 15.96, x: 4 },
-				{ y: 17.73, x: 5 },
-				{ y: 21.5, x: 6 }
-			]
-		},
-		{        
-			type: "stackedColumn",
-			showInLegend: true,
-			name: "Q3",
-			color: "#695A42",
-			dataPoints: [
-				{ y: 7.28, x: 0 },
-				{ y: 9.72, x: 1 },
-				{ y: 13.30, x: 2 },
-				{ y: 14.9, x: 3 },
-				{ y: 18.10, x: 4 },
-				{ y: 18.68, x: 5 },
-				{ y: 22.45, x: 6 }
-			]
-		},
-		{        
-			type: "stackedColumn",
-			showInLegend: true,
-			name: "Q4",
-			color: "#B6B1A8",
-			dataPoints: [
-				{ y: 8.44, x: 0 },
-				{ y: 10.58, x: 1 },
-				{ y: 14.41, x: 2 },
-				{ y: 16.86, x: 3 },
-				{ y: 10.64, x: 4 },
-				{ y: 21.32, x: 5 },
-				{ y: 26.06, x: 6 }
-			]
-	}]
-    });
-    */
     chart.render()
 }
 
@@ -669,17 +628,21 @@ function* namesFrom(label:Label|undefined): Generator<Label> {
     }
 }
 
+//returns labels starting from the most recent
 function getDistinctLabels(entries:Entry[]): Label[] {
-    const s:Set<string> = new Set()
-    for (const entry of entries) {
-        for (const name of namesFrom(entry.before)) {
-            s.add(name)
-        }
-        for (const name of namesFrom(entry.after)) {
-            s.add(name)
+    const seen:Set<string> = new Set()
+    const result:string[] = []
+    function add(s:string) {
+        if (!seen.has(s)) {
+            result.push(s)
+            seen.add(s)
         }
     }
-    return Array.from(s.keys())
+    for (const entry of revit(entries)) {
+        for (const name of namesFrom(entry.before)) add(name)
+        for (const name of namesFrom(entry.after)) add(name)
+    }
+    return result
 }
 
 function uniques<T>(xs:T[]): T[] {
@@ -933,7 +896,7 @@ function showLabels(entries:Entry[], credentials:Credentials) {
         result.append(l)
         l.click(function(e) {
             e.stopPropagation()
-            labelPopup(label, callback)
+            labelPopup(label, callback, entries)
         })
         const picker = $(`<input type='color' id='${label}-color' class='colorpicker' value='${colorHex}'></input>`)
         result.append(picker)
@@ -1249,7 +1212,12 @@ type TimeUpdate = {kind: 'relabel', before?: Entry, after?: Entry, label: Label}
     //add new_entry after update.before; new_entry.after = update.before.after; new_entry.before = label; update.before.after = update.label;
     | {kind: 'spliceSplit', before: Entry, label: Label, time: Date} 
     | {kind: 'bulkRename', from: Label, to:Label, moveChildren: boolean}
-
+    // Deletes update.entry
+    // If shiftForward is an entry and entry.before is not undefined, then it entry.shiftForward.before = entry.before
+    // Similarly for shiftBack and entry.after
+    // If reflectBack is an entry and entry.before is not undefined, then entry.reflectBack.after = entry.before
+    // Similarly for reflectForward and entry.after
+    | {kind: 'delete', entry: Entry, shiftForward?: Entry, reflectBack?: Entry, shiftBack?:Entry, reflectForward?:Entry}
 
 function insertAt<T>(toInsert:T, xs:T[], index:number): T[] {
     return xs.slice(0, index).concat([toInsert]).concat(xs.slice(index))
@@ -1281,6 +1249,16 @@ function upsertInPlace(entry:Entry, entries:Entry[]): void {
         }
     }
     entries.push(entry)
+}
+
+const DEFAULT_LIMIT:number = 500
+function maxEntriesToShow(): number {
+    const params = new URLSearchParams(window.location.search)
+    const limit = params.get('limit')
+    if (limit == undefined) return DEFAULT_LIMIT
+    const n = parseInt(limit)
+    if (isNaN(n)) return DEFAULT_LIMIT
+    return n
 }
 
 function bulkUpsertInPlace(upserts:Entry[], entries:Entry[]): void {
@@ -1378,6 +1356,25 @@ function applyUpdate(
                 if (changed) upserts.push(newEntry)
             }
             bulkUpsert(upserts)
+            break
+        case 'delete':
+            upsert({...update.entry, deleted:true})
+            if (update.entry.before !== undefined) {
+                if (update.shiftForward !== undefined) {
+                    upsert({...update.shiftForward, before: update.entry.before})
+                }
+                if (update.reflectBack !== undefined) {
+                    upsert({...update.reflectBack, after: update.entry.before})
+                }
+            }
+            if (update.entry.after !== undefined) {
+                if (update.shiftBack !== undefined) {
+                    upsert({...update.shiftBack, after: update.entry.after})
+                }
+                if (update.reflectForward !== undefined) {
+                    upsert({...update.reflectForward, before: update.entry.after})
+                }
+            }
             break
         default: assertNever(update)
     }
@@ -1677,7 +1674,7 @@ function matchLabel(category:Label, label:Label): string|null {
     else return null
 }
 
-function makeReport(entries:Entry[], start:Date, end:Date, topLabel:Label): Report {
+function makeReport(entries:Entry[], start:Date, end:Date, topLabels:Label[]): Report {
     entries = sortAndFilter(entries)
     const result:Report = {}
     for (const [e0, e1] of listPairs(it(entries))) {
@@ -1685,8 +1682,10 @@ function makeReport(entries:Entry[], start:Date, end:Date, topLabel:Label): Repo
             const t0 = last(e0.time, start)
             const t1 = first(e1.time, end)
             const label = labelFrom(e0, e1)
-            const subLabel:string|null = matchLabel(topLabel, label)
-            if (t0 != t1 && subLabel != null) addToReport(subLabel, t1.getTime() - t0.getTime(), result)
+            for (const topLabel of topLabels) {
+                const subLabel:string|null = matchLabel(topLabel, label)
+                if (t0 != t1 && subLabel != null) addToReport(label, t1.getTime() - t0.getTime(), result)
+            }
         }
     }
     return result
@@ -1700,20 +1699,42 @@ function reportToString(report:Report): string {
     return `{${parts.join(',')}}`
 }
 
-/*
-function renderReport(report:Report, prefix:string = '', indentation:number=0): JQE {
-    const result = $('<ul></ul>')
-    for (const [label, [time, sub]] of Object.entries(report)) {
-        const e = $(`<li>[${renderDuration(time)}] ${label}</li>`)
-        e.append(renderReport(sub, `${prefix}${label}/`, indentation+1))
-        result.append(e)
+function serializeReport(report:Report): string {
+    return JSON.stringify(report)
+}
+
+function purifyReport(impure:any): Report {
+    const result:Report = {}
+    for (const [a, b] of Object.entries(impure)) {
+        if (Array.isArray(b) && b.length == 2) {
+            const [x, y] = b
+            if (typeof(x) == 'number') {
+                result[a] = [x, purifyReport(y)]
+            } else {
+                console.error(`Failed to parse report because ${x} is not a number.`)
+            }
+        } else {
+            console.error(`Failed to parse report because ${b} is not an array of length 2.`)
+        }
     }
     return result
 }
-*/
+
+export function deserializeReport(s:string): Report {
+    const result = JSON.parse(s)
+    return purifyReport(result)
+}
 
 function len(x:Report): number {
     return Object.keys(x).length
+}
+
+function total(x:Report): number {
+    let result:number =0
+    for (const [t, r] of Object.values(x)) {
+        result += t
+    }
+    return result
 }
 
 // Compress paths (with no branches) into single steps
@@ -1732,6 +1753,16 @@ export function flattenReport(report:Report): Report {
     return result
 }
 
+const TOTAL:string = 'total'
+// If there are multiple top level parts in the report, put a "Total" category on top
+// This seems like the wrong report semantics, but whatever
+function capReport(report:Report): Report {
+    if (len(report) == 1) return report
+    const result:Report = {}
+    result[TOTAL] = [total(report), report]
+    return result
+}
+
 function totalReportTime(report:Report): number {
     let result:number = 0
     for (const [label, [time, sub]] of Object.entries(report)) {
@@ -1744,35 +1775,101 @@ function renderPercentage(x:number): string {
     return `${Math.round(x * 100)}%`
 }
 
-function renderReportLine(label:Label, time:number, fraction:number, hasChildren:boolean): JQE {
+function renderColorPicker(label:Label, profile:Profile): HTMLInputElement {
+    const picker = document.createElement('input')
+    picker.setAttribute('type', 'color')
+    picker.setAttribute('class', 'colorpicker')
+    const colorHex = colorToHex(getColor(label, profile))
+    picker.setAttribute('value', colorHex)
+    picker.addEventListener('change', function() {
+        console.log(picker.value)
+        profile.colors.set(label, colorFromHex(picker.value))
+        saveProfile(profile)
+    })
+    return picker
+}
+
+function renderReportLine(
+    label:Label,
+    time:number,
+    onClick:() => void,
+    hasChildren:boolean,
+    fullLabel:Label,
+    editParams:EditParams|null=null
+): HTMLDivElement {
     const childString = (hasChildren) ? ' (+)' : ''
     const childClass = (hasChildren) ? ' clickable' : ''
-    return $(`<div class='ReportLine${childClass}'>[${renderDuration(time)}] ${label}${childString}</div>`)
+    const result = div('ReportLine')
+    const lineText = spanText(`reportLineText${hasChildren ? ' clickable' : ''}`, `[${renderDuration(time)}] ${label}${childString}`)
+    lineText.addEventListener('click', onClick)
+    result.append(lineText)
+    if (editParams != null) {
+        const renameLink = spanText('renameButton clickable', '[rename]')
+        renameLink.addEventListener('click', function() {
+            labelPopup(fullLabel, editParams.callback, editParams.entries)
+        })
+        const picker = renderColorPicker(fullLabel, editParams.profile)
+        result.append(picker, renameLink)
+    }
+    return result
     //return $(`<div class="reportLine"><span>${label}</span><span>${renderDuration(time)}</span><span>${renderPercentage(fraction)}</span></div>`)
 }
 
-function renderReport(report:Report, prefix:string = '', indentation:number=0, total:number|null = null): JQE {
+//TODO: should have a profileChanged callback
+interface EditParams {
+    profile: Profile,
+    callback: (t:TimeUpdate) => void,
+    entries:Entry[],
+}
+
+function makeEditParams(entries:Entry[], credentials:Credentials): EditParams {
+    function callback(update:TimeUpdate) {
+        applyAndSave(entries, update, credentials)
+    }
+    return {profile: loadProfile(), callback: callback, entries: entries}
+}
+
+function joinPrefix(prefix:string, label:string) {
+    if (prefix == TOTAL || prefix.length == 0) return label
+    return `${prefix}/${label}`
+}
+
+function renderReport(
+    report:Report,
+    editParams:EditParams|null = null,
+    indentation:number=0,
+    total:number|null = null,
+    expanded:boolean=true,
+    prefix:string = '',
+    profile:Profile = loadProfile()
+): HTMLDivElement {
     const totalNotNull = (total === null) ? totalReportTime(report) : total 
-    const result = $('<div class="indent"></div>')
-    function renderLineAndChildren(label:Label, time:number, sub:Report): JQE[] {
+    const result = div('indent')
+    function renderLineAndChildren(label:Label, time:number, sub:Report): HTMLDivElement[] {
         const hasChildren = Object.keys(sub).length > 0
-        const head = renderReportLine(label, time, time / totalNotNull, hasChildren)
-        const result = [head]
+        const result:HTMLDivElement[] = []
+        const fullLabel = joinPrefix(prefix, label)
+        let showChildren = () => {}
         if (hasChildren) {
-            const child = renderReport(sub, `${prefix}${label}/`, indentation+1)
-            let visible:boolean = false
-            head.click(function() {
+            const child = renderReport(sub, editParams, indentation+1, total, false, fullLabel, profile)
+            let visible:boolean = true
+            if (!expanded) {
+                child.hidden = true
+                visible = false
+            }
+            showChildren = function() {
                 if (visible) {
                     visible = false;
-                    child.hide();
+                    child.hidden = true
                 } else {
                     visible = true;
-                    child.show();
+                    child.hidden = false
                 }
-            })
-            child.hide()
+            }
             result.push(child)
         }
+        const head = renderReportLine(label, time, showChildren, hasChildren, fullLabel, editParams)
+        result.unshift(head)
         return result
     }
     const entries = Object.entries(report)
@@ -1794,7 +1891,7 @@ interface ReportParams {
 export async function loadReport() {
     const credentials = await getCredentials()
     const entries = await loadEntries(credentials)
-    const profile = loadProfile()
+    const editParams = makeEditParams(entries, credentials)
     function paramsFromInput(): ReportParams {
         return {
             start: $('#startDate').val() as string|undefined,
@@ -1826,28 +1923,109 @@ export async function loadReport() {
     }
     $('.reportParamInput').keydown(kd)
 
-    function render(params: ReportParams) {
+    function reportFromParams(params: ReportParams): Report|null {
         const startParse = parseString(dateRule, params.start || 'start today')
         const endParse = parseString(dateRule, params.end || 'now')
-        const label = params.label || ''
-        if (startParse == 'fail' || startParse == 'prefix') return
-        if (endParse == 'fail' || endParse == 'prefix') return
+        const labels = (params.label == undefined) ? [''] : params.label.split(',').map(x => x.trim())
+        if (startParse == 'fail' || startParse == 'prefix') return null
+        if (endParse == 'fail' || endParse == 'prefix') return null
         const startDate = startParse[0]
         const endDate = endParse[0]
         window.history.pushState(null, "", `report.html?${renderParams(params)}`)
         $('#startDate').val(params.start || '')
         $('#endDate').val(params.end || '')
         $('#topLabel').val(params.label || '')
-        const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), label)
-        $('#reportContainer').empty()
-        //debugger;
-        $('#reportContainer').append(renderReport(flattenReport(report)))
+        const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels)
+        return capReport(flattenReport(report))
     }
+
+    function render(params: ReportParams) {
+        const report = reportFromParams(params) 
+        if (report != null) displayReport(report, editParams)
+    }
+
     window.addEventListener('popstate', function (event) {
         render(paramsFromURL(window.location.href))
     });
     $('#generate').click(() => render(paramsFromInput()))
+    $('#export').click(function() {
+        const report = reportFromParams(paramsFromInput())
+        if (report != null) {
+            displayReport(report, editParams)
+            exportReport(report)
+        }
+    })
     $('#startDate').val('start today')
     $('#endDate').val('now')
     render(paramsFromURL(window.location.href))
+}
+
+function baseURL(): string {
+    const url = window.location;
+    return url.protocol + '//' + url.host
+}
+
+function exportReport(report:Report) {
+    $('#exportPopup').attr('active', 'true')
+    $('#exportPopup').html(
+        `<label for="link">Link:</label>` +
+        `<textarea id="link"></textarea>` +
+        `<div>` +
+        `<span class="option" choosable id="copyLink">Copy (⏎)</span>` +
+        `<span class="option" choosable id="cancel">Cancel (esc)</span>` +
+        `</div>`
+    )
+    const id:string = randomLinkID()
+    //TOOD: include base URL
+    $('#link').val(`${baseURL()}/r/${id}`)
+    $('#link').select()
+    const serialized = serializeReport(report)
+    console.log(serialized)
+    $.get(`export?id=${id}&serialized=${encodeURIComponent(serialized)}`).done(function(x:string) {
+        if (x != 'ok') {
+            alert(x)
+        }
+    })
+    function exit() {
+        $('#link').blur()
+        $('#exportPopup').attr('active', 'false')
+    }
+    function submit() {
+        $('#link').select()
+        document.execCommand('copy')
+        exit()
+    }
+    $('#cancel').click(exit)
+    $('#copyLink').click(submit)
+    $('#link').keydown((e:any) => {
+        if (e.keyCode == 27) {
+            exit()
+            e.preventDefault()
+        } else if (e.keyCode == 13) {
+            submit()
+            e.preventDefault()
+        }
+    })
+}
+
+// Used in viewReport.ejs as well as from loadReport()
+export function displayReport(report:Report, editParams:EditParams|null) {
+    if (editParams != null) {
+        const f = editParams.callback
+        editParams.callback = (update:TimeUpdate) => {
+            f(update)
+            displayReport(report, editParams)
+        }
+    }
+    $('#reportContainer').empty()
+    //const editable = (document.getElementById('editableReport') as HTMLInputElement)
+    $('#reportContainer').append(renderReport(
+        capReport(flattenReport(report)),
+        null //editable.checked ? editParams : null
+    ))
+}
+
+
+function randomLinkID(): string {
+    return Math.random().toString(36).substring(2, 8)
 }

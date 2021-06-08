@@ -16,6 +16,5 @@ CREATE TABLE entries (
 
 CREATE TABLE reports (
     id TEXT PRIMARY KEY,
-    serialized_report TEXT NOT NULL
+    serialized TEXT NOT NULL
 );
-

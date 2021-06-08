@@ -25,6 +25,7 @@ var __read = (this && this.__read) || function (o, n) {
     }
     return ar;
 };
+export var emptyRule = { kind: 'sequence', parts: [], map: function () { return null; } };
 // return value is [result, parsed, unparsed]
 export function parseString(rule, s) {
     var tokens = tokenize(s);
@@ -194,43 +195,50 @@ function yesterday() {
     d.setDate(d.getDate() - 1);
     return { month: d.getMonth(), day: d.getDate(), year: d.getFullYear() };
 }
-function lastDayOfWeek(n) {
+function lastDayOfWeek(n, weeksAgo) {
+    if (weeksAgo === void 0) { weeksAgo = 0; }
     var d = new Date();
     while (d.getDay() != n)
         d.setDate(d.getDate() - 1);
+    d.setDate(d.getDate() - 7 * weeksAgo);
     return { month: d.getMonth(), day: d.getDate(), year: d.getFullYear() };
 }
 export var dayRule = any([
     seq([month, number], function (x) { return ({ month: x[0], day: x[1] }); }),
+    seq([number, raw('/'), number], function (x) { return ({ month: x[0] - 1, day: x[2] }); }),
     map(raw('yesterday'), function () { return yesterday(); }),
     map(raw('today'), function () { return today(); }),
-    seq([raw('last'), dayName], function (x) { return lastDayOfWeek(x[1]); })
+    map(dayName, function (x) { return lastDayOfWeek(x); }),
+    seq([raw('last'), dayName], function (x) { return lastDayOfWeek(x[1], 1); })
 ]);
 var ampmTimeRule = any([
     seq([colonTime, ampm], function (xs) { return ({ hours: xs[0][0], minutes: xs[0][1], ampm: xs[1] }); }),
-    seq([number, ampm], function (xs) { return ({ hours: xs[0], minutes: 0, ampm: xs[1] }); })
+    seq([number, ampm], function (xs) { return ({ hours: xs[0], minutes: 0, ampm: xs[1] }); }),
+    map(raw('midnight'), function () { return ({ hours: 12, minutes: 0, ampm: 'am' }); }),
+    map(raw('noon'), function () { return ({ hours: 12, minutes: 0, ampm: 'pm' }); })
 ]);
 var startOrEnd = any([raw('start'), raw('end')]);
 export var dateRule = any([
-    seq([ampmTimeRule, raw(','), month, number], function (x) { return ({
+    seq([ampmTimeRule, raw(','), dayRule], function (x) { return ({
         hours: x[0].hours,
         minutes: x[0].minutes,
         ampm: x[0].ampm,
-        month: x[2],
-        day: x[3],
+        month: x[2].month,
+        day: x[2].day,
     }); }),
-    seq([ampmTimeRule, month, number], function (x) { return ({
+    seq([ampmTimeRule, dayRule], function (x) { return ({
         hours: x[0].hours,
         minutes: x[0].minutes,
         ampm: x[0].ampm,
-        month: x[1],
-        day: x[2],
+        month: x[1].month,
+        day: x[2].day,
     }); }),
     ampmTimeRule,
     seq([colonTime], function (x) { return ({
         hours: x[0][0],
         minutes: x[0][1],
     }); }),
+    map(number, function (x) { return ({ hours: x, minutes: 0 }); }),
     map(raw('now'), function () { return 'now'; }),
     seq([startOrEnd, dayRule], function (x) { return ({
         hours: (x[0] == 'start') ? 12 : 11,
@@ -245,6 +253,14 @@ export var dateRule = any([
         ampm: 'am',
         month: (x[0] == 'start') ? x[1] : ((x[1] + 1) % 12),
         day: 1
+    }); }),
+    seq([startOrEnd, number], function (x) { return ({
+        hours: 12,
+        minutes: 0,
+        ampm: 'am',
+        month: 1,
+        day: 1,
+        year: (x[0] == 'start') ? x[1] : x[1] + 1
     }); })
 ]);
 function assertNever(value) {
@@ -252,9 +268,10 @@ function assertNever(value) {
 }
 export var rawAction = { kind: 'raw' };
 export var actionRule = any([
-    map(number, function (x) { return ({ kind: 'number', number: x }); }),
+    map(duration, function (x) { return ({ kind: 'default', minutes: x }); }),
     map(raw('now'), function () { return ({ kind: 'now' }); }),
-    seq([any([raw('first'), raw('last')]), duration], function (xs) { return ({ kind: xs[0], minutes: xs[1] }); }),
-    seq([any([raw('until'), raw('after')]), dateRule], function (xs) { return ({ kind: xs[0], time: xs[1] }); })
+    map(raw('continue'), function () { return ({ kind: 'continue' }); }),
+    seq([any([raw('first'), raw('last'), raw('except')]), duration], function (xs) { return ({ kind: xs[0], minutes: xs[1] }); }),
+    seq([any([raw('until'), raw('after'), map(raw('since'), function () { return 'after'; })]), dateRule], function (xs) { return ({ kind: xs[0], time: xs[1] }); })
 ]);
 //# sourceMappingURL=parse.js.map
