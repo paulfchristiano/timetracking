@@ -18,7 +18,6 @@ export class InputBox<T> {
     ) {
 
         this.matcher = new Matcher(universe)
-        elem.empty()
 
         this.inputElement = document.createElement('input')
         this.inputElement.setAttribute('class', 'input')

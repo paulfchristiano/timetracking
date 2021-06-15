@@ -27,7 +27,6 @@ var InputBox = /** @class */ (function () {
         this.selected = null;
         this.submit = function () { };
         this.matcher = new Matcher(universe);
-        elem.empty();
         this.inputElement = document.createElement('input');
         this.inputElement.setAttribute('class', 'input');
         elem.append(this.inputElement);

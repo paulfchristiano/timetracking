@@ -181,10 +181,8 @@ background:black;
     visibility:hidden;
     top:5em;
     left:5em;
-    font-size: 1.5em;
     border: 3px solid;
     border-radius: 6px;
-    width: 20em;
     padding: 1em;
     background: white;
     z-index:3;
@@ -192,4 +190,8 @@ background:black;
 
 #renamePopup[active='true'] {
     visibility:visible;
+}
+
+.wide {
+    min-width: 30em;
 }

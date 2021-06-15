@@ -30,6 +30,9 @@ function calendarSpan(
 
 
 function labelPopup(label:Label, callback:(update:TimeUpdate) => void, entries:Entry[]): void {
+    function dismiss() {
+        $('#renamePopup').attr('active', 'false')
+    }
     $('#renamePopup').attr('active', 'true')
     $('#popuplabel').text(label)
     $('#newlabel').empty()
@@ -37,11 +40,18 @@ function labelPopup(label:Label, callback:(update:TimeUpdate) => void, entries:E
     const e = div('inputwrapper')
     $('#newlabel').append(e)
     const input = new InputBox(emptyRule, null, getDistinctLabels(entries), $(e))
+    input.inputElement.setAttribute('class', 'wide')
     input.bind(function (a, s) {
         callback({kind: 'bulkRename', from: label, to: s, moveChildren: $('#movechildren').prop('checked')})
-        hideLabelPopup()
+        dismiss()
     })
     input.focus()
+    $('#doneButton').unbind('click')
+    $('#doneButton').bind('click', dismiss)
+    $('#renamePopup').unbind('keydown')
+    $('#renamePopup').keydown(function(e) {
+        if (e.keyCode == 27) dismiss()
+    })
     $('#movechildren').prop('checked', true)
 }
 
@@ -312,10 +322,7 @@ export async function loadTracker(): Promise<void> {
                         ]})
                         break
                     case 'except':
-                        callback({kind: 'composite', updates: [
-                            {kind: 'append', time: minutesAfter(start.time, a.minutes), after:s},
-                            {kind: 'append', time:new Date(), before:s}
-                        ]})
+                        callback({kind: 'append', before: (s.length == 0) ? undefined : s, time: minutesAfter(new Date(), -a.minutes)})
                         break
                     case 'default':
                         callback({kind: 'append', before: s, time: minutesAfter(start.time, a.minutes)})
@@ -1278,8 +1285,8 @@ function bulkUpsertInPlace(upserts:Entry[], entries:Entry[]): void {
     }
 }
 
-//Mutates entries in place
-//Also updates in place
+//Mutates entries
+//Also mutates updates
 function applyUpdate(
     update:TimeUpdate,
     entries:Entry[],
@@ -1675,6 +1682,7 @@ function matchLabel(category:Label, label:Label): string|null {
 }
 
 function makeReport(entries:Entry[], start:Date, end:Date, topLabels:Label[]): Report {
+    console.log(entries[800], entries.length)
     entries = sortAndFilter(entries)
     const result:Report = {}
     for (const [e0, e1] of listPairs(it(entries))) {
@@ -1793,6 +1801,7 @@ function renderReportLine(
     label:Label,
     time:number,
     onClick:() => void,
+    onDoubleClick:() => void,
     hasChildren:boolean,
     fullLabel:Label,
     editParams:EditParams|null=null
@@ -1802,6 +1811,7 @@ function renderReportLine(
     const result = div('ReportLine')
     const lineText = spanText(`reportLineText${hasChildren ? ' clickable' : ''}`, `[${renderDuration(time)}] ${label}${childString}`)
     lineText.addEventListener('click', onClick)
+    lineText.addEventListener('dblclick', onDoubleClick)
     result.append(lineText)
     if (editParams != null) {
         const renameLink = spanText('renameButton clickable', '[rename]')
@@ -1829,6 +1839,13 @@ function makeEditParams(entries:Entry[], credentials:Credentials): EditParams {
     return {profile: loadProfile(), callback: callback, entries: entries}
 }
 
+function addCallbackAfter(editParams:EditParams, callback: (t:TimeUpdate) => void): EditParams {
+    return {...editParams, callback: function(t) {
+        editParams.callback(t)
+        callback(t)
+    }}
+}
+
 function joinPrefix(prefix:string, label:string) {
     if (prefix == TOTAL || prefix.length == 0) return label
     return `${prefix}/${label}`
@@ -1842,22 +1859,25 @@ function renderReport(
     expanded:boolean=true,
     prefix:string = '',
     profile:Profile = loadProfile()
-): HTMLDivElement {
+): [HTMLDivElement, () => void] {
     const totalNotNull = (total === null) ? totalReportTime(report) : total 
     const result = div('indent')
-    function renderLineAndChildren(label:Label, time:number, sub:Report): HTMLDivElement[] {
+    const childExpanders:Array<() => void> = []
+    function renderLineAndChildren(label:Label, time:number, sub:Report): [HTMLDivElement[], () => void] {
         const hasChildren = Object.keys(sub).length > 0
         const result:HTMLDivElement[] = []
         const fullLabel = joinPrefix(prefix, label)
-        let showChildren = () => {}
+        let toggleChildren = () => {}
+        let expandAllChildren = () => {}
         if (hasChildren) {
-            const child = renderReport(sub, editParams, indentation+1, total, false, fullLabel, profile)
+            const [child, expander] = renderReport(sub, editParams, indentation+1, total, false, fullLabel, profile)
             let visible:boolean = true
             if (!expanded) {
                 child.hidden = true
                 visible = false
             }
-            showChildren = function() {
+            toggleChildren = function() {
+                console.log(`toggle ${label}!`)
                 if (visible) {
                     visible = false;
                     child.hidden = true
@@ -1866,26 +1886,56 @@ function renderReport(
                     child.hidden = false
                 }
             }
+            expandAllChildren = function() {
+                console.log(`expand ${label}!`)
+                visible = true;
+                child.hidden = false;
+                expander()
+            }
             result.push(child)
         }
-        const head = renderReportLine(label, time, showChildren, hasChildren, fullLabel, editParams)
+        const head = renderReportLine(label, time, toggleChildren, expandAllChildren, hasChildren, fullLabel, editParams)
         result.unshift(head)
-        return result
+        return [result, expandAllChildren]
     }
     const entries = Object.entries(report)
     entries.sort((x, y) => y[1][0] - x[1][0])
     for (const [label, [time, sub]] of entries) {
-        for (const e of renderLineAndChildren(label, time, sub)) {
-            result.append(e)
-        }
+        const [elements, expandChildren] = renderLineAndChildren(label, time, sub)
+        for (const e of elements) { result.append(e) }
+        childExpanders.push(expandChildren)
     }
-    return result
+    return [result, () => { for (const f of childExpanders) f() }]
 }
 
 interface ReportParams {
     start?: string,
     end?: string,
     label?: Label
+}
+
+function renderParams(params:ReportParams): string {
+    const parts:string[] = []
+    if (params.start !== undefined) parts.push(`start=${params.start}`)
+    if (params.end !== undefined) parts.push(`end=${params.end}`)
+    if (params.label !== undefined) parts.push(`label=${params.label}`)
+    return parts.join('&')
+}
+
+function reportFromParams(entries:Entry[], params: ReportParams): Report|null {
+    const startParse = parseString(dateRule, params.start || 'start today')
+    const endParse = parseString(dateRule, params.end || 'now')
+    const labels = (params.label == undefined) ? [''] : params.label.split(',').map(x => x.trim())
+    if (startParse == 'fail' || startParse == 'prefix') return null
+    if (endParse == 'fail' || endParse == 'prefix') return null
+    const startDate = startParse[0]
+    const endDate = endParse[0]
+    window.history.pushState(null, "", `report.html?${renderParams(params)}`)
+    $('#startDate').val(params.start || '')
+    $('#endDate').val(params.end || '')
+    $('#topLabel').val(params.label || '')
+    const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels)
+    return capReport(flattenReport(report))
 }
 
 export async function loadReport() {
@@ -1907,13 +1957,6 @@ export async function loadReport() {
             label: params.get('label') || undefined,
         }
     }
-    function renderParams(params:ReportParams): string {
-        const parts:string[] = []
-        if (params.start !== undefined) parts.push(`start=${params.start}`)
-        if (params.end !== undefined) parts.push(`end=${params.end}`)
-        if (params.label !== undefined) parts.push(`label=${params.label}`)
-        return parts.join('&')
-    }
 
     function kd(e:any) {
         if (e.keyCode == 13) {
@@ -1923,35 +1966,22 @@ export async function loadReport() {
     }
     $('.reportParamInput').keydown(kd)
 
-    function reportFromParams(params: ReportParams): Report|null {
-        const startParse = parseString(dateRule, params.start || 'start today')
-        const endParse = parseString(dateRule, params.end || 'now')
-        const labels = (params.label == undefined) ? [''] : params.label.split(',').map(x => x.trim())
-        if (startParse == 'fail' || startParse == 'prefix') return null
-        if (endParse == 'fail' || endParse == 'prefix') return null
-        const startDate = startParse[0]
-        const endDate = endParse[0]
-        window.history.pushState(null, "", `report.html?${renderParams(params)}`)
-        $('#startDate').val(params.start || '')
-        $('#endDate').val(params.end || '')
-        $('#topLabel').val(params.label || '')
-        const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels)
-        return capReport(flattenReport(report))
-    }
-
     function render(params: ReportParams) {
-        const report = reportFromParams(params) 
-        if (report != null) displayReport(report, editParams)
+        console.log(entries.length, entries[800])
+        const report = reportFromParams(entries, params)
+        if (report != null) displayReport(report, addCallbackAfter(editParams, () => render(params)))
     }
 
     window.addEventListener('popstate', function (event) {
         render(paramsFromURL(window.location.href))
     });
     $('#generate').click(() => render(paramsFromInput()))
+    document.getElementById('editableReport')?.addEventListener('click', () => render(paramsFromInput()))
     $('#export').click(function() {
-        const report = reportFromParams(paramsFromInput())
+        const params = paramsFromInput()
+        const report = reportFromParams(entries, params)
         if (report != null) {
-            displayReport(report, editParams)
+            displayReport(report, addCallbackAfter(editParams, () => render(params)))
             exportReport(report)
         }
     })
@@ -2010,19 +2040,13 @@ function exportReport(report:Report) {
 
 // Used in viewReport.ejs as well as from loadReport()
 export function displayReport(report:Report, editParams:EditParams|null) {
-    if (editParams != null) {
-        const f = editParams.callback
-        editParams.callback = (update:TimeUpdate) => {
-            f(update)
-            displayReport(report, editParams)
-        }
-    }
     $('#reportContainer').empty()
-    //const editable = (document.getElementById('editableReport') as HTMLInputElement)
+    const editable = (document.getElementById('editableReport') as HTMLInputElement)
+    console.log(report)
     $('#reportContainer').append(renderReport(
         capReport(flattenReport(report)),
-        null //editable.checked ? editParams : null
-    ))
+        editable.checked ? editParams : null
+    )[0])
 }
 
 
