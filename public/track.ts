@@ -1801,7 +1801,7 @@ function renderReportLine(
     label:Label,
     time:number,
     onClick:() => void,
-    onDoubleClick:() => void,
+    onShiftClick:() => void,
     hasChildren:boolean,
     fullLabel:Label,
     editParams:EditParams|null=null
@@ -1810,8 +1810,14 @@ function renderReportLine(
     const childClass = (hasChildren) ? ' clickable' : ''
     const result = div('ReportLine')
     const lineText = spanText(`reportLineText${hasChildren ? ' clickable' : ''}`, `[${renderDuration(time)}] ${label}${childString}`)
-    lineText.addEventListener('click', onClick)
-    lineText.addEventListener('dblclick', onDoubleClick)
+    lineText.addEventListener('click', function(e) {
+        if (e.shiftKey) onShiftClick()
+        else onClick()
+        e.preventDefault()
+    })
+    lineText.addEventListener('mousedown', function(e) {
+        if (e.shiftKey) e.preventDefault()
+    })
     result.append(lineText)
     if (editParams != null) {
         const renameLink = spanText('renameButton clickable', '[rename]')

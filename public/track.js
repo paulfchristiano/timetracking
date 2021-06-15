@@ -2409,14 +2409,23 @@ function renderColorPicker(label, profile) {
     });
     return picker;
 }
-function renderReportLine(label, time, onClick, onDoubleClick, hasChildren, fullLabel, editParams) {
+function renderReportLine(label, time, onClick, onShiftClick, hasChildren, fullLabel, editParams) {
     if (editParams === void 0) { editParams = null; }
     var childString = (hasChildren) ? ' (+)' : '';
     var childClass = (hasChildren) ? ' clickable' : '';
     var result = div('ReportLine');
     var lineText = spanText("reportLineText" + (hasChildren ? ' clickable' : ''), "[" + renderDuration(time) + "] " + label + childString);
-    lineText.addEventListener('click', onClick);
-    lineText.addEventListener('dblclick', onDoubleClick);
+    lineText.addEventListener('click', function (e) {
+        if (e.shiftKey)
+            onShiftClick();
+        else
+            onClick();
+        e.preventDefault();
+    });
+    lineText.addEventListener('mousedown', function (e) {
+        if (e.shiftKey)
+            e.preventDefault();
+    });
     result.append(lineText);
     if (editParams != null) {
         var renameLink = spanText('renameButton clickable', '[rename]');
