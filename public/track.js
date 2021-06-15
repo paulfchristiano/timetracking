@@ -2678,7 +2678,7 @@ export function displayReport(report, editParams) {
     $('#reportContainer').empty();
     var editable = document.getElementById('editableReport');
     console.log(report);
-    $('#reportContainer').append(renderReport(capReport(flattenReport(report)), editable.checked ? editParams : null)[0]);
+    $('#reportContainer').append(renderReport(capReport(flattenReport(report)), (editable !== null && editable.checked) ? editParams : null)[0]);
 }
 function randomLinkID() {
     return Math.random().toString(36).substring(2, 8);

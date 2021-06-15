@@ -2045,7 +2045,7 @@ export function displayReport(report:Report, editParams:EditParams|null) {
     console.log(report)
     $('#reportContainer').append(renderReport(
         capReport(flattenReport(report)),
-        editable.checked ? editParams : null
+        (editable !== null && editable.checked) ? editParams : null
     )[0])
 }
 
