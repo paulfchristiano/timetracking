@@ -294,7 +294,8 @@ export async function loadTracker(): Promise<void> {
         entries.push(makeNewEntry(now(), undefined, undefined))
         saveEntries(entries)
     }
-    let focused:Entry|null = null;
+    let focused:number|null = null;
+    let focusedEntry:Entry|null = null;
     const entriesToShow = maxEntriesToShow()
     function callback(update:TimeUpdate) {
         applyAndSave(entries, update, credentials)
@@ -302,9 +303,11 @@ export async function loadTracker(): Promise<void> {
     }
     function startInput(elem:HTMLDivElement, startIndex:number, entries:Entry[]): InputBox<Action> {
         $('.inputwrapper').empty()
+        focused = startIndex
         const x = new InputBox(actionRule, {kind: 'raw'}, getDistinctLabels(entries), $(elem))
         const start:Entry = entries[startIndex]
         const end:Entry|null = (startIndex < entries.length - 1) ? entries[startIndex+1] : null
+        focusedEntry = end
         if (end == null) {
             x.bind((a, s) => {
                 switch (a.kind) {
@@ -343,10 +346,11 @@ export async function loadTracker(): Promise<void> {
                 }
             })
         } else {
+            console.log('!!!')
             x.bind((a, s) => {
                 switch (a.kind) {
                     case 'raw':
-                        callback({kind: 'relabel', label: s, before: start, after: end})
+                        if (s != '') callback({kind: 'relabel', label: s, before: start, after: end})
                         break
                     case 'first':
                         callback({kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes)})
@@ -393,8 +397,24 @@ export async function loadTracker(): Promise<void> {
         const toStart:Array<() => void> = [];
         const elem = document.getElementById('inputs')
         const elements:HTMLDivElement[] = []
+        const elemsByIndex:Map<number, HTMLDivElement> = new Map()
         if (elem != null) elem.innerHTML = ''
         const sortedEntries = sortAndFilter(entries)
+        $('#inputs').unbind('keydown')
+        $('#inputs').bind('keydown', function(e) {
+            function focusOnIndex(newIndex:number) {
+                const elem = elemsByIndex.get(newIndex)
+                if (elem != null) {
+                    const inputBox = startInput(elem, newIndex, sortedEntries)
+                    inputBox.focus()
+                }
+            }
+            if (e.keyCode == 38 && focused !== null) {
+                focusOnIndex(focused+1)
+            } else if (e.keyCode == 40 && focused !== null) {
+                focusOnIndex(focused-1)
+            }
+        })
         for (let i = sortedEntries.length-1; i >= 0 && i >= sortedEntries.length - entriesToShow; i--) {
             const end:Entry|null = (i == sortedEntries.length - 1) ? null : sortedEntries[i+1]
             const start:Entry|null = sortedEntries[i]
@@ -449,10 +469,10 @@ export async function loadTracker(): Promise<void> {
                 row.append(inputBuffer)
                 text.addEventListener('click', () => {
                     startInput(inputWrapper, i, sortedEntries).focus()
-                    focused = end;
                 })
                 elements.push(row)
-                if (focused == end) {
+                elemsByIndex.set(i, inputWrapper)
+                if (focusedEntry?.id == end?.id) {
                     const inputBox = startInput(inputWrapper, i, sortedEntries)
                     toStart.push(() => inputBox.focus())
                 }
@@ -1682,7 +1702,6 @@ function matchLabel(category:Label, label:Label): string|null {
 }
 
 function makeReport(entries:Entry[], start:Date, end:Date, topLabels:Label[]): Report {
-    console.log(entries[800], entries.length)
     entries = sortAndFilter(entries)
     const result:Report = {}
     for (const [e0, e1] of listPairs(it(entries))) {
@@ -1883,7 +1902,6 @@ function renderReport(
                 visible = false
             }
             toggleChildren = function() {
-                console.log(`toggle ${label}!`)
                 if (visible) {
                     visible = false;
                     child.hidden = true
@@ -1893,7 +1911,6 @@ function renderReport(
                 }
             }
             expandAllChildren = function() {
-                console.log(`expand ${label}!`)
                 visible = true;
                 child.hidden = false;
                 expander()
@@ -1973,7 +1990,6 @@ export async function loadReport() {
     $('.reportParamInput').keydown(kd)
 
     function render(params: ReportParams) {
-        console.log(entries.length, entries[800])
         const report = reportFromParams(entries, params)
         if (report != null) displayReport(report, addCallbackAfter(editParams, () => render(params)))
     }
@@ -2016,7 +2032,6 @@ function exportReport(report:Report) {
     $('#link').val(`${baseURL()}/r/${id}`)
     $('#link').select()
     const serialized = serializeReport(report)
-    console.log(serialized)
     $.get(`export?id=${id}&serialized=${encodeURIComponent(serialized)}`).done(function(x:string) {
         if (x != 'ok') {
             alert(x)
@@ -2048,7 +2063,6 @@ function exportReport(report:Report) {
 export function displayReport(report:Report, editParams:EditParams|null) {
     $('#reportContainer').empty()
     const editable = (document.getElementById('editableReport') as HTMLInputElement)
-    console.log(report)
     $('#reportContainer').append(renderReport(
         capReport(flattenReport(report)),
         (editable !== null && editable.checked) ? editParams : null

@@ -70,6 +70,7 @@ export class InputBox<T> {
                 const suggestion:string|undefined = this.currentSuggestion()
                 if (suggestion !== undefined) this.inputElement.value = suggestion
                 e.preventDefault()
+                if (this.suggestions.length > 0) e.stopPropagation()
                 break
         }
     }

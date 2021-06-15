@@ -71,6 +71,8 @@ var InputBox = /** @class */ (function () {
                 if (suggestion !== undefined)
                     this.inputElement.value = suggestion;
                 e.preventDefault();
+                if (this.suggestions.length > 0)
+                    e.stopPropagation();
                 break;
         }
     };

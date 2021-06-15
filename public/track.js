@@ -390,9 +390,11 @@ export function loadTracker() {
         }
         function startInput(elem, startIndex, entries) {
             $('.inputwrapper').empty();
+            focused = startIndex;
             var x = new InputBox(actionRule, { kind: 'raw' }, getDistinctLabels(entries), $(elem));
             var start = entries[startIndex];
             var end = (startIndex < entries.length - 1) ? entries[startIndex + 1] : null;
+            focusedEntry = end;
             if (end == null) {
                 x.bind(function (a, s) {
                     switch (a.kind) {
@@ -432,10 +434,12 @@ export function loadTracker() {
                 });
             }
             else {
+                console.log('!!!');
                 x.bind(function (a, s) {
                     switch (a.kind) {
                         case 'raw':
-                            callback({ kind: 'relabel', label: s, before: start, after: end });
+                            if (s != '')
+                                callback({ kind: 'relabel', label: s, before: start, after: end });
                             break;
                         case 'first':
                             callback({ kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes) });
@@ -477,9 +481,26 @@ export function loadTracker() {
             var toStart = [];
             var elem = document.getElementById('inputs');
             var elements = [];
+            var elemsByIndex = new Map();
             if (elem != null)
                 elem.innerHTML = '';
             var sortedEntries = sortAndFilter(entries);
+            $('#inputs').unbind('keydown');
+            $('#inputs').bind('keydown', function (e) {
+                function focusOnIndex(newIndex) {
+                    var elem = elemsByIndex.get(newIndex);
+                    if (elem != null) {
+                        var inputBox = startInput(elem, newIndex, sortedEntries);
+                        inputBox.focus();
+                    }
+                }
+                if (e.keyCode == 38 && focused !== null) {
+                    focusOnIndex(focused + 1);
+                }
+                else if (e.keyCode == 40 && focused !== null) {
+                    focusOnIndex(focused - 1);
+                }
+            });
             var _loop_2 = function (i) {
                 var end = (i == sortedEntries.length - 1) ? null : sortedEntries[i + 1];
                 var start = sortedEntries[i];
@@ -536,10 +557,10 @@ export function loadTracker() {
                     row.append(inputBuffer);
                     text.addEventListener('click', function () {
                         startInput(inputWrapper_1, i, sortedEntries).focus();
-                        focused = end;
                     });
                     elements.push(row);
-                    if (focused == end) {
+                    elemsByIndex.set(i, inputWrapper_1);
+                    if ((focusedEntry === null || focusedEntry === void 0 ? void 0 : focusedEntry.id) == (end === null || end === void 0 ? void 0 : end.id)) {
                         var inputBox_1 = startInput(inputWrapper_1, i, sortedEntries);
                         toStart.push(function () { return inputBox_1.focus(); });
                     }
@@ -564,7 +585,7 @@ export function loadTracker() {
                 finally { if (e_6) throw e_6.error; }
             }
         }
-        var credentials, profile, entries, focused, entriesToShow, heartbeats;
+        var credentials, profile, entries, focused, focusedEntry, entriesToShow, heartbeats;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
@@ -579,6 +600,7 @@ export function loadTracker() {
                         saveEntries(entries);
                     }
                     focused = null;
+                    focusedEntry = null;
                     entriesToShow = maxEntriesToShow();
                     heartbeats = [];
                     setInterval(function () {
@@ -2226,7 +2248,6 @@ function matchLabel(category, label) {
 }
 function makeReport(entries, start, end, topLabels) {
     var e_39, _a, e_40, _b;
-    console.log(entries[800], entries.length);
     entries = sortAndFilter(entries);
     var result = {};
     try {
@@ -2480,7 +2501,6 @@ function renderReport(report, editParams, indentation, total, expanded, prefix, 
                 visible_1 = false;
             }
             toggleChildren = function () {
-                console.log("toggle " + label + "!");
                 if (visible_1) {
                     visible_1 = false;
                     child_1.hidden = true;
@@ -2491,7 +2511,6 @@ function renderReport(report, editParams, indentation, total, expanded, prefix, 
                 }
             };
             expandAllChildren = function () {
-                console.log("expand " + label + "!");
                 visible_1 = true;
                 child_1.hidden = false;
                 expander_1();
@@ -2600,7 +2619,6 @@ export function loadReport() {
             }
         }
         function render(params) {
-            console.log(entries.length, entries[800]);
             var report = reportFromParams(entries, params);
             if (report != null)
                 displayReport(report, addCallbackAfter(editParams, function () { return render(params); }));
@@ -2654,7 +2672,6 @@ function exportReport(report) {
     $('#link').val(baseURL() + "/r/" + id);
     $('#link').select();
     var serialized = serializeReport(report);
-    console.log(serialized);
     $.get("export?id=" + id + "&serialized=" + encodeURIComponent(serialized)).done(function (x) {
         if (x != 'ok') {
             alert(x);
@@ -2686,7 +2703,6 @@ function exportReport(report) {
 export function displayReport(report, editParams) {
     $('#reportContainer').empty();
     var editable = document.getElementById('editableReport');
-    console.log(report);
     $('#reportContainer').append(renderReport(capReport(flattenReport(report)), (editable !== null && editable.checked) ? editParams : null)[0]);
 }
 function randomLinkID() {
