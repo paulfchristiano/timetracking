@@ -104,8 +104,8 @@ export function anyToken(tokens:string[]): Rule<number> {
 }
 
 export const month: Rule<number> = any<number>([
-    anyToken(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'nov', 'dec']),
-    anyToken(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'november', 'december'])
+    anyToken(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']),
+    anyToken(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'])
 ])
 
 export const dayName: Rule<lessThan7> = any<number>([
@@ -169,7 +169,10 @@ function lastDayOfWeek(n:lessThan7, weeksAgo:number=0): DaySpec {
 }
 
 export const dayRule:Rule<DaySpec> = any<DaySpec>([
+    seq([month, number, raw(','), number], x => ({month: x[0], day: x[1], year: x[3]})),
+    seq([month, number, number], x => ({month: x[0], day: x[1], year: x[2]})),
     seq([month, number], x => ({month: x[0], day: x[1]})),
+    seq([number, raw('/'), number, raw('/'), number], x => ({month: x[0] - 1, day: x[2], year: x[4]})),
     seq([number, raw('/'), number], x => ({month: x[0] - 1, day: x[2]})),
     map(raw('yesterday'), ()=>yesterday()),
     map(raw('today'), () => today()),
@@ -177,13 +180,14 @@ export const dayRule:Rule<DaySpec> = any<DaySpec>([
     seq([raw('last'), dayName], x => lastDayOfWeek(x[1], 1))
 ])
 
-
 export type DateSpec = 'now' | {
     hours: number,
     minutes: number,
     ampm?: 'am'|'pm',
     month?: number,
     day?: number,
+    year?: number,
+    dayOffset?: number// Shift this many days forward or backward
 }
 
 const ampmTimeRule:Rule<DateSpec> = any([
@@ -202,13 +206,15 @@ export const dateRule:Rule<DateSpec> = any<DateSpec>([
         ampm: x[0].ampm,
         month: x[2].month,
         day: x[2].day,
+        year: x[2].year
     })),
     seq([ampmTimeRule, dayRule], x => ({
         hours: x[0].hours,
         minutes: x[0].minutes,
         ampm: x[0].ampm,
         month: x[1].month,
-        day: x[2].day,
+        day: x[1].day,
+        year: x[1].year
     })),
     ampmTimeRule,
     seq([colonTime], x => ({
@@ -218,11 +224,13 @@ export const dateRule:Rule<DateSpec> = any<DateSpec>([
     map(number, x => ({hours: x, minutes: 0})),
     map(raw('now'), () => 'now'),
     seq([startOrEnd, dayRule], x=>({
-        hours: (x[0] == 'start') ? 12 : 11,
-        minutes: (x[0] == 'start') ? 0 : 59,
-        ampm: (x[0] == 'start') ? 'am' : 'pm',
+        hours: 12,
+        minutes: 0,
+        ampm: 'am',
         month: x[1].month,
-        day: x[1].day
+        day: x[1].day,
+        year: x[1].year,
+        dayOffset: (x[0] == 'end') ? 1 : 0,
     })),
     seq([startOrEnd, month], x=>({
         hours: 12,
@@ -250,7 +258,8 @@ export type Action = {kind: 'raw'}
     | {kind: 'default', minutes: number}
     | {kind: 'now'}
     | {kind: 'last', minutes: number}
-    | {kind: 'except', minutes: number}
+    | {kind: 'afterFirstMinutes', minutes: number}
+    | {kind: 'untilMinutesAgo', minutes: number}
     | {kind: 'until', time: DateSpec}
     | {kind: 'after', time: DateSpec}
     | {kind: 'continue'}
@@ -261,6 +270,8 @@ export const actionRule:Rule<Action> = any<Action>([
     map(duration, x => ({kind: 'default', minutes: x})),
     map(raw('now'), () => ({kind: 'now'})),
     map(raw('continue'), () => ({kind: 'continue'})),
-    seq([any([raw('first'), raw('last'), raw('except')]), duration], xs => ({kind: xs[0] as ('first' | 'last' | 'except'), minutes: xs[1] as number})),
-    seq([any([raw('until'), raw('after'), map(raw('since'), () => 'after')]), dateRule], xs => ({kind: xs[0] as ('until'| 'after'),  time: xs[1] as DateSpec}))
+    seq([any([raw('first'), raw('last')]), duration], xs => ({kind: xs[0] as ('first' | 'last'), minutes: xs[1] as number})),
+    seq([any([raw('until'), raw('after'), map(raw('since'), () => 'after')]), dateRule], xs => ({kind: xs[0] as ('until'| 'after'),  time: xs[1] as DateSpec})),
+    seq([raw('until'), duration, raw('ago')], xs => ({kind: 'untilMinutesAgo', minutes: xs[1]})),
+    seq([raw('after'), raw('first'), duration], xs => ({kind: 'afterFirstMinutes', minutes: xs[1]}))
 ])

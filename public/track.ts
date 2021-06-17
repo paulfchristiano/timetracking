@@ -137,13 +137,22 @@ function zoomedPopup(
                     labelAfter: s
                 })
                 break
-            case 'except':
+            case 'afterFirstMinutes':
+                callback({
+                    kind: 'split',
+                    before: entries[startIndex],
+                    after: entries[startIndex+1],
+                    time: minutesAfter(entries[endIndex].time, a.minutes),
+                    labelAfter: s
+                })
+                break
+            case 'untilMinutesAgo':
                 callback({
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex+1],
                     time: minutesAfter(entries[endIndex].time, -a.minutes),
-                    labelAfter: s
+                    labelBefore: s
                 })
                 break
             case 'first':
@@ -247,7 +256,10 @@ function specToDate(spec:DateSpec, anchor:Date, rel:'next'|'previous'|'closest')
     const month = (spec.month === undefined) ? anchor.getMonth() : spec.month
     copiedAnchor.setMonth(month)
     const hours:number = (spec.hours == 12) ? 0 : spec.hours
-    const dateCandidates:number[] = (spec.day === undefined) ? [-1, 0, 1].map(x => anchor.getDate() + x) : [spec.day]
+    const year:number = spec.year || anchor.getFullYear()
+    const dateCandidates:number[] = (spec.day === undefined)
+        ? [-1, 0, 1].map(x => anchor.getDate() + x)
+        : [spec.day + (spec.dayOffset || 0)]
     const ampmCandidates:('am'|'pm')[] = (spec.ampm === undefined) ? ['am', 'pm'] : [spec.ampm]
     const hourCandidates:number[] = ampmCandidates.map(x => (x == 'am') ? hours : (hours+12)%24)
     for (const date of dateCandidates) {
@@ -255,6 +267,7 @@ function specToDate(spec:DateSpec, anchor:Date, rel:'next'|'previous'|'closest')
             const candidate = new Date(copiedAnchor)
             candidate.setDate(date)
             candidate.setHours(hours)
+            candidate.setFullYear(year)
             const diff = candidate.getTime() - anchor.getTime()
             const absDiff = Math.abs(diff)
             const isValid = (rel=='closest') || (rel == 'next' && diff > 0) || (rel == 'previous' && diff < 0)
@@ -324,8 +337,11 @@ export async function loadTracker(): Promise<void> {
                             {kind: 'append', time:new Date(), before:s}
                         ]})
                         break
-                    case 'except':
+                    case 'untilMinutesAgo':
                         callback({kind: 'append', before: (s.length == 0) ? undefined : s, time: minutesAfter(new Date(), -a.minutes)})
+                        break
+                    case 'afterFirstMinutes':
+                        callback({kind: 'append', after: (s.length == 0) ? undefined : s, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'default':
                         callback({kind: 'append', before: s, time: minutesAfter(start.time, a.minutes)})
@@ -346,7 +362,6 @@ export async function loadTracker(): Promise<void> {
                 }
             })
         } else {
-            console.log('!!!')
             x.bind((a, s) => {
                 switch (a.kind) {
                     case 'raw':
@@ -363,8 +378,11 @@ export async function loadTracker(): Promise<void> {
                     case 'last':
                         callback({kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
                         break
-                    case 'except':
+                    case 'untilMinutesAgo':
                         callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
+                        break
+                    case 'afterFirstMinutes':
+                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'until':
                         callback({kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next')})
@@ -491,16 +509,36 @@ function emptyProfile(): Profile {
 export async function loadChart() {
     const credentials = await getCredentials()
     const entries = await loadEntries(credentials)
-    renderChart(entries, loadProfile())
+    renderChartFromEntries(entries, loadProfile())
 }
 
-function renderChart(entries:Entry[], profile:Profile){
+function renderChartFromEntries(entries:Entry[], profile:Profile){
     const timings:Map<string, number> = getTotalTime(entries, entries[0].time, entries[entries.length - 1].time)
     const datapoints:{y: number, label: string, color:string}[] = []
     for (const [k, v] of timings) {
-        datapoints.push({label: k, y: v / 3600, color: renderColor(getColor(k, profile))})
+        datapoints.push({label: k, y: v / 3600000, color: renderColor(getColor(k, profile))})
     }
     /* tslint:disable-next-line */
+    var chart = new CanvasJS.Chart("chartContainer", {
+        animationEnabled: false,
+        title: {},
+        data: [{
+            type: "pie",
+            startAngle: 240,
+            yValueFormatString: "##0.0h",
+            indexLabel: "{label} {y}",
+            dataPoints: datapoints
+        }]
+    });
+    chart.render();
+}
+
+function renderChart(report:Report, profile:Profile){
+    let total = totalReportTime(report);
+    const datapoints:{y: number, label: string, color:string}[] = []
+    for (const [label, [t, r]] of Object.entries(report)) {
+        datapoints.push({label: label, y: t / 3600000, color: renderColor(getColor(label, profile))})
+    }
     var chart = new CanvasJS.Chart("chartContainer", {
         animationEnabled: false,
         title: {},
@@ -723,16 +761,38 @@ function renderTime(date:Date): string {
     function renderAMPM(d:MyDate) {
         return `${renderTime(d)} ${(d.ampm == 'am') ? 'AM' : 'PM'}`
     }
-    function renderDay(d:MyDate) {
-        return `${renderAMPM(d)}, ${d.month} ${d.day}`
+    function renderDay(d:MyDate, prefix:string) {
+        return `${prefix || (renderAMPM(d) + ',')} ${d.month} ${d.day}`
     }
-    function renderYear(d:MyDate) {
-        return `${renderDay(d)}, ${d.year}`
+    function renderYear(d:MyDate, prefix:string) {
+        return `${renderDay(d, prefix)}, ${d.year}`
     }
-    if (now.year != myDate.year) return renderYear(myDate)
-    else if (now.month != myDate.month || now.day != myDate.day) return renderDay(myDate)
+    //const isMidnight = (myDate.ampm == 'am' && myDate.hour == 12 && myDate.minute == 0)
+    const prefix = renderAMPM(myDate) + ','
+    if (now.year != myDate.year) return renderYear(myDate, prefix)
+    else if (now.month != myDate.month || now.day != myDate.day) return renderDay(myDate, prefix)
     else if (now.ampm != myDate.ampm || myDate.hour == 12) return renderAMPM(myDate)
     else return renderTime(myDate)
+}
+
+function timeToDateSpecString(date:Date): string {
+    const now = convertDate(new Date())
+    const myDate = convertDate(date)
+    function renderTime(d:MyDate) {
+        return `${d.hour}:${twoDigits(d.minute)}`
+    }
+    function renderAMPM(d:MyDate) {
+        return `${renderTime(d)} ${(d.ampm == 'am') ? 'AM' : 'PM'}`
+    }
+    function renderDay(d:MyDate, prefix:string) {
+        return `${prefix || (renderAMPM(d) + ',')} ${d.month} ${d.day}`
+    }
+    function renderYear(d:MyDate, prefix:string) {
+        return `${renderDay(d, prefix)}, ${d.year}`
+    }
+    const isMidnight = (myDate.ampm == 'am' && myDate.hour == 12 && myDate.minute == 0)
+    const prefix = isMidnight ? 'start' : `${renderAMPM(myDate)},`
+    return renderYear(myDate, prefix)
 }
 
 function saveEntries(entries:Entry[]) {
@@ -1947,7 +2007,7 @@ function renderParams(params:ReportParams): string {
 
 function reportFromParams(entries:Entry[], params: ReportParams): Report|null {
     const startParse = parseString(dateRule, params.start || 'start today')
-    const endParse = parseString(dateRule, params.end || 'now')
+    const endParse = parseString(dateRule, params.end || 'end today')
     const labels = (params.label == undefined) ? [''] : params.label.split(',').map(x => x.trim())
     if (startParse == 'fail' || startParse == 'prefix') return null
     if (endParse == 'fail' || endParse == 'prefix') return null
@@ -1958,7 +2018,21 @@ function reportFromParams(entries:Entry[], params: ReportParams): Report|null {
     $('#endDate').val(params.end || '')
     $('#topLabel').val(params.label || '')
     const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels)
-    return capReport(flattenReport(report))
+    return flattenReport(report)
+}
+
+function shiftInterval(start:string, end:string, direction:-1|1): [string, string] {
+    const startSpec = parseString(dateRule, start)
+    if (startSpec == 'fail' || startSpec == 'prefix' || startSpec[2].length > 0) return [start, end]
+    const endSpec = parseString(dateRule, end)
+    if (endSpec == 'fail' || endSpec == 'prefix' || endSpec[2].length > 0) return [start, end]
+    const startDate = specToDate(startSpec[0], now(), 'closest')
+    const endDate = specToDate(endSpec[0], now(), 'closest')
+    const interval = (endDate.getTime() - startDate.getTime())
+    function shiftAndRender(d:Date): string {
+        return timeToDateSpecString(new Date(d.getTime() + direction * interval))
+    }
+    return [shiftAndRender(startDate), shiftAndRender(endDate)]
 }
 
 export async function loadReport() {
@@ -1989,9 +2063,27 @@ export async function loadReport() {
     }
     $('.reportParamInput').keydown(kd)
 
+    function shiftReport(direction:-1|1): void {
+        const params = paramsFromInput()
+        const start = params.start || 'start today'
+        const end = params.end || 'end today'
+        const [newStart, newEnd] = shiftInterval(start, end, direction)
+        const newParams = {start: newStart, end: newEnd, label: params.label}
+        render(newParams)
+    }
+
+    $('#pageleft').click(() => shiftReport(-1))
+    $('#pageright').click(() => shiftReport(1))
+
+    function display(report:Report, params: ReportParams) {
+        displayReport(report, addCallbackAfter(editParams, () => render(params)))
+    }
+
     function render(params: ReportParams) {
         const report = reportFromParams(entries, params)
-        if (report != null) displayReport(report, addCallbackAfter(editParams, () => render(params)))
+        if (report != null) {
+            display(report, params)
+        }
     }
 
     window.addEventListener('popstate', function (event) {
@@ -2003,7 +2095,7 @@ export async function loadReport() {
         const params = paramsFromInput()
         const report = reportFromParams(entries, params)
         if (report != null) {
-            displayReport(report, addCallbackAfter(editParams, () => render(params)))
+            display(report, params)
             exportReport(report)
         }
     })
@@ -2063,10 +2155,13 @@ function exportReport(report:Report) {
 export function displayReport(report:Report, editParams:EditParams|null) {
     $('#reportContainer').empty()
     const editable = (document.getElementById('editableReport') as HTMLInputElement)
+    report = flattenReport(report)
     $('#reportContainer').append(renderReport(
-        capReport(flattenReport(report)),
+        capReport(report),
         (editable !== null && editable.checked) ? editParams : null
     )[0])
+    const profile:Profile = (editParams == null) ? emptyProfile() : editParams.profile
+    renderChart(report, profile)
 }
 
 
