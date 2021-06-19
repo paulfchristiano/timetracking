@@ -1,5 +1,5 @@
 import e from 'express'
-import { Callbacks, data, map, readyException } from 'jquery'
+import { Callbacks, data, htmlPrefilter, isArray, map, readyException } from 'jquery'
 import { InputBox } from './suggester.js'
 import { DateSpec, Action, dateRule, parseString, actionRule, emptyRule } from './parse.js'
 import { Entry, Label, serializeEntries, deserializeEntries, uid, newUID, makeNewEntry } from './entries.js'
@@ -503,7 +503,7 @@ export async function loadTracker(): Promise<void> {
 }
 
 function emptyProfile(): Profile {
-    return {colors: new Map()}
+    return {colors: new Map(), expanded: new Set()}
 }
 
 export async function loadChart() {
@@ -537,7 +537,8 @@ function renderChart(report:Report, profile:Profile){
     let total = totalReportTime(report);
     const datapoints:{y: number, label: string, color:string}[] = []
     for (const [label, [t, r]] of Object.entries(report)) {
-        datapoints.push({label: label, y: t / 3600000, color: renderColor(getColor(label, profile))})
+        const labelPrefix = label.split('/')[0]
+        datapoints.push({label: labelPrefix, y: t / 3600000, color: renderColor(getColor(labelPrefix, profile))})
     }
     var chart = new CanvasJS.Chart("chartContainer", {
         animationEnabled: false,
@@ -952,13 +953,13 @@ function hideLabelPopup(): void {
 }
 
 function saveProfile(profile:Profile): void {
-    localStorage.setItem('profile', serializeProfile(profile))
+    localStorage.setItem('profile', newSerializeProfile(profile))
 }
 
 function loadProfile(): Profile {
     const s:string|null = localStorage.getItem('profile')
     if (s == '' || s == null) return emptyProfile()
-    return deserializeProfile(s)
+    return newDeserializeProfile(s)
 }
 
 export async function loadLabels() {
@@ -1088,11 +1089,12 @@ function group(name: string, view:View): string|null {
     return `${start}/${group(rest, v.expand)}`
 }
 
-interface Profile {
-    colors: Map<Label, Color>
+type Profile = {
+    colors: Map<Label, Color>,
+    expanded: Set<Label>
 }
 
-function serializeProfile(profile:Profile): string {
+function oldSerializeProfile(profile:Profile): string {
     const parts = []
     for (const [label, color] of profile.colors.entries()) {
         parts.push(`${label},${colorToHex(color)}`)
@@ -1100,14 +1102,46 @@ function serializeProfile(profile:Profile): string {
     return parts.join(';')
 }
 
-function deserializeProfile(s:string): Profile {
+function newSerializeProfile(profile:Profile): string {
+    const serializable = {
+        colors: Array.from(profile.colors.entries()).map(x => [x[0], colorToHex(x[1])]),
+        expanded: Array.from(profile.expanded.keys())
+    }
+    return JSON.stringify(serializable)
+}
+
+function newDeserializeProfile(s:string): Profile {
+    try {
+        const json = JSON.parse(s)
+        const result = emptyProfile()
+        const colors = json.colors
+        if (!Array.isArray(colors)) throw Error('colors not array')
+        for (const x of colors) {
+            if (!Array.isArray(x) || x.length != 2 || typeof(x[0]) != 'string' || typeof(x[1]) != 'string') {
+                throw Error(`malformed colors array entry ${x} of length ${x.length} [${typeof(x[0])}, ${typeof(x[1])}]`)
+            }
+            result.colors.set(x[0], colorFromHex(x[1]))
+        }
+        const expanded = json.expanded
+        if (!Array.isArray(expanded)) throw Error('expanded not array')
+        for (const x of expanded) {
+            if (typeof(x) != 'string') throw Error('expanded array entry not string')
+            result.expanded.add(x)
+        }
+        return result
+    } catch(e) {
+        console.log(e)
+        return oldDeserializeProfile(s)
+    }
+}
+
+function oldDeserializeProfile(s:string): Profile {
     const result = emptyProfile()
     for (const pair of s.split(';')) {
         const parts = pair.split(',')
-        if (parts.length != 2) {
-            console.log('Bad part')
+        if (parts.length == 2) {
+            result.colors.set(parts[0], colorFromHex(parts[1]))
         }
-        result.colors.set(parts[0], colorFromHex(parts[1]))
     }
     return result
 }
@@ -1862,7 +1896,7 @@ function renderPercentage(x:number): string {
     return `${Math.round(x * 100)}%`
 }
 
-function renderColorPicker(label:Label, profile:Profile): HTMLInputElement {
+function renderColorPicker(label:Label, profile:Profile, callback:()=>void=() => {}): HTMLInputElement {
     const picker = document.createElement('input')
     picker.setAttribute('type', 'color')
     picker.setAttribute('class', 'colorpicker')
@@ -1872,6 +1906,7 @@ function renderColorPicker(label:Label, profile:Profile): HTMLInputElement {
         console.log(picker.value)
         profile.colors.set(label, colorFromHex(picker.value))
         saveProfile(profile)
+        callback()
     })
     return picker
 }
@@ -1883,6 +1918,7 @@ function renderReportLine(
     onShiftClick:() => void,
     hasChildren:boolean,
     fullLabel:Label,
+    profile:Profile,
     editParams:EditParams|null=null
 ): HTMLDivElement {
     const childString = (hasChildren) ? ' (+)' : ''
@@ -1898,12 +1934,18 @@ function renderReportLine(
         if (e.shiftKey) e.preventDefault()
     })
     result.append(lineText)
+    function editCallback(t:TimeUpdate) {
+        if (editParams !== null) {
+            editParams.callback(t)
+            editParams.redraw()
+        }
+    }
     if (editParams != null) {
         const renameLink = spanText('renameButton clickable', '[rename]')
         renameLink.addEventListener('click', function() {
-            labelPopup(fullLabel, editParams.callback, editParams.entries)
+            labelPopup(fullLabel, editCallback, editParams.entries)
         })
-        const picker = renderColorPicker(fullLabel, editParams.profile)
+        const picker = renderColorPicker(fullLabel, profile, editParams.redraw)
         result.append(picker, renameLink)
     }
     return result
@@ -1912,8 +1954,8 @@ function renderReportLine(
 
 //TODO: should have a profileChanged callback
 interface EditParams {
-    profile: Profile,
     callback: (t:TimeUpdate) => void,
+    redraw: () => void,
     entries:Entry[],
 }
 
@@ -1921,14 +1963,11 @@ function makeEditParams(entries:Entry[], credentials:Credentials): EditParams {
     function callback(update:TimeUpdate) {
         applyAndSave(entries, update, credentials)
     }
-    return {profile: loadProfile(), callback: callback, entries: entries}
+    return {callback: callback, entries: entries, redraw: () => {}}
 }
 
-function addCallbackAfter(editParams:EditParams, callback: (t:TimeUpdate) => void): EditParams {
-    return {...editParams, callback: function(t) {
-        editParams.callback(t)
-        callback(t)
-    }}
+function addRedraw(editParams:EditParams, redraw: () => void): EditParams {
+    return {...editParams, redraw: function() {editParams.redraw(); redraw()}}
 }
 
 function joinPrefix(prefix:string, label:string) {
@@ -1938,48 +1977,44 @@ function joinPrefix(prefix:string, label:string) {
 
 function renderReport(
     report:Report,
+    profile:Profile,
     editParams:EditParams|null = null,
     indentation:number=0,
     total:number|null = null,
     expanded:boolean=true,
     prefix:string = '',
-    profile:Profile = loadProfile()
-): [HTMLDivElement, () => void] {
+): [HTMLDivElement, (expand:boolean) => void] {
     const totalNotNull = (total === null) ? totalReportTime(report) : total 
     const result = div('indent')
-    const childExpanders:Array<() => void> = []
-    function renderLineAndChildren(label:Label, time:number, sub:Report): [HTMLDivElement[], () => void] {
+    const childExpanders:Array<(expand:boolean) => void> = []
+    function renderLineAndChildren(label:Label, time:number, sub:Report): [HTMLDivElement[], (expand:boolean) => void] {
         const hasChildren = Object.keys(sub).length > 0
         const result:HTMLDivElement[] = []
         const fullLabel = joinPrefix(prefix, label)
-        let toggleChildren = () => {}
-        let expandAllChildren = () => {}
+        let toggleVisibility = () => {}
+        let setAllChildrenVisibility = (expand:boolean) => {}
+        let toggleAllChildren = () => {}
+        let visible:boolean = expanded || profile.expanded.has(fullLabel)
+        function setVisibility(newVisibility:boolean, child:HTMLDivElement) {
+            visible = newVisibility
+            child.hidden = !visible
+            if (visible) profile.expanded.add(fullLabel)
+            else profile.expanded.delete(fullLabel)
+        }
         if (hasChildren) {
-            const [child, expander] = renderReport(sub, editParams, indentation+1, total, false, fullLabel, profile)
-            let visible:boolean = true
-            if (!expanded) {
-                child.hidden = true
-                visible = false
+            const [child, expander] = renderReport(sub, profile, editParams, indentation+1, total, false, fullLabel)
+            child.hidden = !visible
+            toggleVisibility = () => setVisibility(!visible, child)
+            setAllChildrenVisibility = function(newVisibility:boolean) {
+                setVisibility(newVisibility, child)
+                expander(newVisibility)
             }
-            toggleChildren = function() {
-                if (visible) {
-                    visible = false;
-                    child.hidden = true
-                } else {
-                    visible = true;
-                    child.hidden = false
-                }
-            }
-            expandAllChildren = function() {
-                visible = true;
-                child.hidden = false;
-                expander()
-            }
+            toggleAllChildren = () => setAllChildrenVisibility(!visible)
             result.push(child)
         }
-        const head = renderReportLine(label, time, toggleChildren, expandAllChildren, hasChildren, fullLabel, editParams)
+        const head = renderReportLine(label, time, toggleVisibility, toggleAllChildren, hasChildren, fullLabel, profile, editParams)
         result.unshift(head)
-        return [result, expandAllChildren]
+        return [result, setAllChildrenVisibility]
     }
     const entries = Object.entries(report)
     entries.sort((x, y) => y[1][0] - x[1][0])
@@ -1988,13 +2023,14 @@ function renderReport(
         for (const e of elements) { result.append(e) }
         childExpanders.push(expandChildren)
     }
-    return [result, () => { for (const f of childExpanders) f() }]
+    return [result, (expand:boolean) => { for (const f of childExpanders) f(expand) }]
 }
 
 interface ReportParams {
     start?: string,
     end?: string,
-    label?: Label
+    label?: Label,
+    edit?: boolean,
 }
 
 function renderParams(params:ReportParams): string {
@@ -2002,6 +2038,7 @@ function renderParams(params:ReportParams): string {
     if (params.start !== undefined) parts.push(`start=${params.start}`)
     if (params.end !== undefined) parts.push(`end=${params.end}`)
     if (params.label !== undefined) parts.push(`label=${params.label}`)
+    if (params.edit !== undefined) parts.push(`edit=${params.edit ? 'true' : 'false'}`)
     return parts.join('&')
 }
 
@@ -2009,16 +2046,18 @@ function reportFromParams(entries:Entry[], params: ReportParams): Report|null {
     const startParse = parseString(dateRule, params.start || 'start today')
     const endParse = parseString(dateRule, params.end || 'end today')
     const labels = (params.label == undefined) ? [''] : params.label.split(',').map(x => x.trim())
+    const edit = (params.edit === undefined) ? false : params.edit
     if (startParse == 'fail' || startParse == 'prefix') return null
     if (endParse == 'fail' || endParse == 'prefix') return null
     const startDate = startParse[0]
     const endDate = endParse[0]
     window.history.pushState(null, "", `report.html?${renderParams(params)}`)
-    $('#startDate').val(params.start || '')
-    $('#endDate').val(params.end || '')
-    $('#topLabel').val(params.label || '')
+    $('#startDate').val(params.start || '');
+    $('#endDate').val(params.end || '');
+    $('#topLabel').val(params.label || '');
+    (document.getElementById('editableReport') as HTMLInputElement).checked = params.edit || false
     const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels)
-    return flattenReport(report)
+    return edit ? report : flattenReport(report)
 }
 
 function shiftInterval(start:string, end:string, direction:-1|1): [string, string] {
@@ -2038,21 +2077,26 @@ function shiftInterval(start:string, end:string, direction:-1|1): [string, strin
 export async function loadReport() {
     const credentials = await getCredentials()
     const entries = await loadEntries(credentials)
+    const profile = loadProfile()
     const editParams = makeEditParams(entries, credentials)
     function paramsFromInput(): ReportParams {
         return {
             start: $('#startDate').val() as string|undefined,
             end: $('#endDate').val() as string|undefined,
             label: $('#topLabel').val() as string|undefined,
+            edit: (document.getElementById('editableReport') as HTMLInputElement).checked,
         }
     }
     function paramsFromURL(url:string): ReportParams {
         const params = new URLSearchParams(url.split('?')[1])
-        return {
+        const result = {
             start: params.get('start') || undefined,
             end: params.get('end') || undefined,
             label: params.get('label') || undefined,
+            edit: (params.get('edit') === 'true')
         }
+        console.log(result)
+        return result
     }
 
     function kd(e:any) {
@@ -2068,7 +2112,7 @@ export async function loadReport() {
         const start = params.start || 'start today'
         const end = params.end || 'end today'
         const [newStart, newEnd] = shiftInterval(start, end, direction)
-        const newParams = {start: newStart, end: newEnd, label: params.label}
+        const newParams = {...params, start: newStart, end: newEnd}
         render(newParams)
     }
 
@@ -2076,7 +2120,8 @@ export async function loadReport() {
     $('#pageright').click(() => shiftReport(1))
 
     function display(report:Report, params: ReportParams) {
-        displayReport(report, addCallbackAfter(editParams, () => render(params)))
+        const newEditParams = (params.edit) ? addRedraw(editParams, () => render(params)) : null
+        displayReport(report, newEditParams, profile)
     }
 
     function render(params: ReportParams) {
@@ -2152,15 +2197,13 @@ function exportReport(report:Report) {
 }
 
 // Used in viewReport.ejs as well as from loadReport()
-export function displayReport(report:Report, editParams:EditParams|null) {
+export function displayReport(
+    report:Report,
+    editParams:EditParams|null=null,
+    profile:Profile=emptyProfile()
+) {
     $('#reportContainer').empty()
-    const editable = (document.getElementById('editableReport') as HTMLInputElement)
-    report = flattenReport(report)
-    $('#reportContainer').append(renderReport(
-        capReport(report),
-        (editable !== null && editable.checked) ? editParams : null
-    )[0])
-    const profile:Profile = (editParams == null) ? emptyProfile() : editParams.profile
+    $('#reportContainer').append(renderReport(capReport(report), profile, editParams)[0])
     renderChart(report, profile)
 }
 

@@ -266,12 +266,15 @@ export type Action = {kind: 'raw'}
 
 export const rawAction:Action = {kind: 'raw'}
 
+const after:Rule<'after'> = map(anyToken(['after', 'since']), () => 'after')
+
 export const actionRule:Rule<Action> = any<Action>([
     map(duration, x => ({kind: 'default', minutes: x})),
     map(raw('now'), () => ({kind: 'now'})),
     map(raw('continue'), () => ({kind: 'continue'})),
     seq([any([raw('first'), raw('last')]), duration], xs => ({kind: xs[0] as ('first' | 'last'), minutes: xs[1] as number})),
-    seq([any([raw('until'), raw('after'), map(raw('since'), () => 'after')]), dateRule], xs => ({kind: xs[0] as ('until'| 'after'),  time: xs[1] as DateSpec})),
     seq([raw('until'), duration, raw('ago')], xs => ({kind: 'untilMinutesAgo', minutes: xs[1]})),
-    seq([raw('after'), raw('first'), duration], xs => ({kind: 'afterFirstMinutes', minutes: xs[1]}))
+    seq([any([raw('until'), after]), dateRule], xs => ({kind: xs[0] as ('until'| 'after'),  time: xs[1] as DateSpec})),
+    seq([raw('until'), raw('last'), duration], xs => ({kind: 'untilMinutesAgo', minutes: xs[2]})),
+    seq([after, raw('first'), duration], xs => ({kind: 'afterFirstMinutes', minutes: xs[2]}))
 ])

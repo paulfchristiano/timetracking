@@ -274,13 +274,15 @@ function assertNever(value) {
     throw new Error("Shouldn't reach this case!");
 }
 export var rawAction = { kind: 'raw' };
+var after = map(anyToken(['after', 'since']), function () { return 'after'; });
 export var actionRule = any([
     map(duration, function (x) { return ({ kind: 'default', minutes: x }); }),
     map(raw('now'), function () { return ({ kind: 'now' }); }),
     map(raw('continue'), function () { return ({ kind: 'continue' }); }),
     seq([any([raw('first'), raw('last')]), duration], function (xs) { return ({ kind: xs[0], minutes: xs[1] }); }),
-    seq([any([raw('until'), raw('after'), map(raw('since'), function () { return 'after'; })]), dateRule], function (xs) { return ({ kind: xs[0], time: xs[1] }); }),
     seq([raw('until'), duration, raw('ago')], function (xs) { return ({ kind: 'untilMinutesAgo', minutes: xs[1] }); }),
-    seq([raw('after'), raw('first'), duration], function (xs) { return ({ kind: 'afterFirstMinutes', minutes: xs[1] }); })
+    seq([any([raw('until'), after]), dateRule], function (xs) { return ({ kind: xs[0], time: xs[1] }); }),
+    seq([raw('until'), raw('last'), duration], function (xs) { return ({ kind: 'untilMinutesAgo', minutes: xs[2] }); }),
+    seq([after, raw('first'), duration], function (xs) { return ({ kind: 'afterFirstMinutes', minutes: xs[2] }); })
 ]);
 //# sourceMappingURL=parse.js.map
