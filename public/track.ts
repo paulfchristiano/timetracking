@@ -513,7 +513,7 @@ export async function loadChart() {
 }
 
 function renderChartFromEntries(entries:Entry[], profile:Profile){
-    const timings:Map<string, number> = getTotalTime(entries, entries[0].time, entries[entries.length - 1].time)
+    const timings:Map<string, number> = getTimeByLabel(entries, entries[0].time, entries[entries.length - 1].time)
     const datapoints:{y: number, label: string, color:string}[] = []
     for (const [k, v] of timings) {
         datapoints.push({label: k, y: v / 3600000, color: renderColor(getColor(k, profile))})
@@ -638,14 +638,14 @@ function incrementMap<T>(map:Map<T, number>, x:T, dy:number): void {
     map.set(x, (y||0)+dy)
 }
 
-function getTotalTime(entries:Entry[], start:Date, end:Date): Map<string, number> {
-    const result:Map<string, number> = new Map()
+function getTimeByLabel(entries:Entry[], start:Date, end:Date): Map<Label, number> {
+    const resultMap:Map<string, number> = new Map()
     const spans:Span[] = spansInRange(start, end, entries)
     for (const span of spans) {
-        const seconds = (span.start.time.getTime() - span.end.time.getTime()) / 1000
-        incrementMap(result, span.label, seconds)
+        const seconds = (span.end.time.getTime() - span.start.time.getTime()) / 1000
+        incrementMap(resultMap, span.label, seconds)
     }
-    return result
+    return resultMap
 }
 
 function sumByName(data:[string, number][]): Map<string, number> {
@@ -1785,21 +1785,24 @@ function matchLabel(category:Label, label:Label): string|null {
     else return null
 }
 
-function makeReport(entries:Entry[], start:Date, end:Date, topLabels:Label[]): Report {
+function makeReport(entries:Entry[], start:Date, end:Date, topLabels:Label[]): [Report, number] {
     entries = sortAndFilter(entries)
     const result:Report = {}
+    let total:number = 0
     for (const [e0, e1] of listPairs(it(entries))) {
         if (e1.time > start && e0.time < end) {
             const t0 = last(e0.time, start)
             const t1 = first(e1.time, end)
             const label = labelFrom(e0, e1)
+            const dt = t1.getTime() - t0.getTime()
+            total += dt
             for (const topLabel of topLabels) {
                 const subLabel:string|null = matchLabel(topLabel, label)
-                if (t0 != t1 && subLabel != null) addToReport(label, t1.getTime() - t0.getTime(), result)
+                if (t0 != t1 && subLabel != null) addToReport(label, dt, result)
             }
         }
     }
-    return result
+    return [result, total]
 }
 
 function reportToString(report:Report): string {
@@ -1972,25 +1975,35 @@ const hour_ms = 60 * minute_ms
 const day_ms = 24 * hour_ms
 const week_ms = 7 * day_ms
 
-function displayReportTime(time:number, display:TimeDisplayOption, total:number) {
+function displayReportTime(
+    time:number,
+    total:number,
+    display:TimeDisplayOption,
+    totalInReport:number,
+) {
+    console.log('total', total)
+    console.log('time', time)
     switch (display) {
         case 'total': return renderDuration(time)
         case 'daily': return `${renderDuration(time * (day_ms) / total)}/d`
         case 'weekly': return `${renderDuration(time * week_ms / total)}/w`
-        case 'percent': return renderPercentage(time/total)
+        case 'percent': return renderPercentage(time/totalInReport)
     }
 }
 
 function renderReport(
     report:Report,
     timeDisplay:TimeDisplayOption,
+    total:number, // this is the total including items not in the report
     profile:Profile,
     editParams:EditParams|null = null,
     indentation:number=0,
-    total:number = totalReportTime(report),
+    reportTotal:number = totalReportTime(report),
     expanded:boolean=true,
     prefix:string = '',
 ): [HTMLDivElement, (expand:boolean) => void] {
+    console.log('total in report', reportTotal)
+    console.log('total overall', total)
     const result = div('indent')
     const childExpanders:Array<(expand:boolean) => void> = []
     function renderLineAndChildren(label:Label, time:number, sub:Report): [HTMLDivElement[], (expand:boolean) => void] {
@@ -2008,7 +2021,7 @@ function renderReport(
             else profile.expanded.delete(fullLabel)
         }
         if (hasChildren) {
-            const [child, expander] = renderReport(sub, timeDisplay, profile, editParams, indentation+1, total, false, fullLabel)
+            const [child, expander] = renderReport(sub, timeDisplay, total, profile, editParams, indentation+1, reportTotal, false, fullLabel)
             child.hidden = !visible
             toggleVisibility = () => setVisibility(!visible, child)
             setAllChildrenVisibility = function(newVisibility:boolean) {
@@ -2020,7 +2033,7 @@ function renderReport(
         }
         const head = renderReportLine(
             label,
-            displayReportTime(time, timeDisplay, total),
+            displayReportTime(time, total, timeDisplay, reportTotal),
             toggleVisibility, toggleAllChildren,
             hasChildren, fullLabel, profile, editParams
         )
@@ -2055,23 +2068,25 @@ function renderParams(params:ReportParams): string {
     return parts.join('&')
 }
 
-function reportFromParams(entries:Entry[], params: ReportParams): Report|null {
+function reportFromParams(entries:Entry[], params: ReportParams): [Report, number]|null {
     const startParse = parseString(dateRule, params.start || 'start today')
     const endParse = parseString(dateRule, params.end || 'end today')
     const labels = (params.label == undefined) ? [''] : params.label.split(',').map(x => x.trim())
     const edit = (params.edit === undefined) ? false : params.edit
     if (startParse == 'fail' || startParse == 'prefix') return null
     if (endParse == 'fail' || endParse == 'prefix') return null
-    const startDate = startParse[0]
-    const endDate = endParse[0]
+    const startDate = specToDate(startParse[0], now(), 'closest')
+    const endDate = specToDate(endParse[0], now(), 'closest')
     window.history.pushState(null, "", `report.html?${renderParams(params)}`)
     $('#startDate').val(params.start || '');
     $('#endDate').val(params.end || '');
     $('#topLabel').val(params.label || '');
     (document.getElementById('editableReport') as HTMLInputElement).checked = params.edit || false
     if (params.timeDisplay != undefined) setRadio('timeDisplay', params.timeDisplay)
-    const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels)
-    return edit ? report : flattenReport(report)
+    const [report, total] = makeReport(entries, startDate, endDate, labels)
+    console.log('total', total)
+    const flattenedReport = edit ? report : flattenReport(report)
+    return [flattenedReport, total]
 }
 
 function shiftInterval(start:string, end:string, direction:-1|1): [string, string] {
@@ -2156,15 +2171,15 @@ export async function loadReport() {
     $('#pageleft').click(() => shiftReport(-1))
     $('#pageright').click(() => shiftReport(1))
 
-    function display(report:Report, params: ReportParams) {
+    function display(report:Report, total:number, params: ReportParams) {
         const newEditParams = (params.edit) ? addRedraw(editParams, () => render(params)) : null
-        displayReport(report, params.timeDisplay || 'total', newEditParams, profile)
+        displayReport(report, total, params.timeDisplay || 'total', newEditParams, profile)
     }
 
     function render(params: ReportParams) {
-        const report = reportFromParams(entries, params)
-        if (report != null) {
-            display(report, params)
+        const reportAndTotal = reportFromParams(entries, params)
+        if (reportAndTotal != null) {
+            display(reportAndTotal[0], reportAndTotal[1], params)
         }
     }
 
@@ -2176,9 +2191,11 @@ export async function loadReport() {
     document.getElementsByName('timeDisplay').forEach(e => e.addEventListener('change', () => render(paramsFromInput())))
     $('#export').click(function() {
         const params = paramsFromInput()
-        const report = reportFromParams(entries, params)
-        if (report != null) {
-            display(report, params)
+        const reportAndTotal = reportFromParams(entries, params)
+        if (reportAndTotal != null) {
+            const report = reportAndTotal[0]
+            const total = reportAndTotal[1]
+            display(report, total, params)
             exportReport(report)
         }
     })
@@ -2237,12 +2254,13 @@ function exportReport(report:Report) {
 // Used in viewReport.ejs as well as from loadReport()
 export function displayReport(
     report:Report,
+    total:number,
     timeDisplay:TimeDisplayOption,
     editParams:EditParams|null=null,
     profile:Profile=emptyProfile()
 ) {
     $('#reportContainer').empty()
-    $('#reportContainer').append(renderReport(capReport(report), timeDisplay, profile, editParams)[0])
+    $('#reportContainer').append(renderReport(capReport(report), timeDisplay, total, profile, editParams)[0])
     //This is pretty ugly, let's just not do it...
     //renderChart(report, profile)
 }

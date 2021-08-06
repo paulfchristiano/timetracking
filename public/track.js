@@ -665,7 +665,7 @@ export function loadChart() {
 }
 function renderChartFromEntries(entries, profile) {
     var e_8, _a;
-    var timings = getTotalTime(entries, entries[0].time, entries[entries.length - 1].time);
+    var timings = getTimeByLabel(entries, entries[0].time, entries[entries.length - 1].time);
     var datapoints = [];
     try {
         for (var timings_1 = __values(timings), timings_1_1 = timings_1.next(); !timings_1_1.done; timings_1_1 = timings_1.next()) {
@@ -854,15 +854,15 @@ function incrementMap(map, x, dy) {
     var y = map.get(x);
     map.set(x, (y || 0) + dy);
 }
-function getTotalTime(entries, start, end) {
+function getTimeByLabel(entries, start, end) {
     var e_14, _a;
-    var result = new Map();
+    var resultMap = new Map();
     var spans = spansInRange(start, end, entries);
     try {
         for (var spans_1 = __values(spans), spans_1_1 = spans_1.next(); !spans_1_1.done; spans_1_1 = spans_1.next()) {
             var span = spans_1_1.value;
-            var seconds = (span.start.time.getTime() - span.end.time.getTime()) / 1000;
-            incrementMap(result, span.label, seconds);
+            var seconds = (span.end.time.getTime() - span.start.time.getTime()) / 1000;
+            incrementMap(resultMap, span.label, seconds);
         }
     }
     catch (e_14_1) { e_14 = { error: e_14_1 }; }
@@ -872,7 +872,7 @@ function getTotalTime(entries, start, end) {
         }
         finally { if (e_14) throw e_14.error; }
     }
-    return result;
+    return resultMap;
 }
 function sumByName(data) {
     var e_15, _a;
@@ -2366,6 +2366,7 @@ function makeReport(entries, start, end, topLabels) {
     var e_42, _a, e_43, _b;
     entries = sortAndFilter(entries);
     var result = {};
+    var total = 0;
     try {
         for (var _c = __values(listPairs(it(entries))), _d = _c.next(); !_d.done; _d = _c.next()) {
             var _e = __read(_d.value, 2), e0 = _e[0], e1 = _e[1];
@@ -2373,12 +2374,14 @@ function makeReport(entries, start, end, topLabels) {
                 var t0 = last(e0.time, start);
                 var t1 = first(e1.time, end);
                 var label = labelFrom(e0, e1);
+                var dt = t1.getTime() - t0.getTime();
+                total += dt;
                 try {
                     for (var topLabels_1 = (e_43 = void 0, __values(topLabels)), topLabels_1_1 = topLabels_1.next(); !topLabels_1_1.done; topLabels_1_1 = topLabels_1.next()) {
                         var topLabel = topLabels_1_1.value;
                         var subLabel = matchLabel(topLabel, label);
                         if (t0 != t1 && subLabel != null)
-                            addToReport(label, t1.getTime() - t0.getTime(), result);
+                            addToReport(label, dt, result);
                     }
                 }
                 catch (e_43_1) { e_43 = { error: e_43_1 }; }
@@ -2398,7 +2401,7 @@ function makeReport(entries, start, end, topLabels) {
         }
         finally { if (e_42) throw e_42.error; }
     }
-    return result;
+    return [result, total];
 }
 function reportToString(report) {
     var e_44, _a;
@@ -2601,21 +2604,26 @@ var minute_ms = 60 * second_ms;
 var hour_ms = 60 * minute_ms;
 var day_ms = 24 * hour_ms;
 var week_ms = 7 * day_ms;
-function displayReportTime(time, display, total) {
+function displayReportTime(time, total, display, totalInReport) {
+    console.log('total', total);
+    console.log('time', time);
     switch (display) {
         case 'total': return renderDuration(time);
         case 'daily': return renderDuration(time * (day_ms) / total) + "/d";
         case 'weekly': return renderDuration(time * week_ms / total) + "/w";
-        case 'percent': return renderPercentage(time / total);
+        case 'percent': return renderPercentage(time / totalInReport);
     }
 }
-function renderReport(report, timeDisplay, profile, editParams, indentation, total, expanded, prefix) {
+function renderReport(report, timeDisplay, total, // this is the total including items not in the report
+profile, editParams, indentation, reportTotal, expanded, prefix) {
     var e_49, _a, e_50, _b;
     if (editParams === void 0) { editParams = null; }
     if (indentation === void 0) { indentation = 0; }
-    if (total === void 0) { total = totalReportTime(report); }
+    if (reportTotal === void 0) { reportTotal = totalReportTime(report); }
     if (expanded === void 0) { expanded = true; }
     if (prefix === void 0) { prefix = ''; }
+    console.log('total in report', reportTotal);
+    console.log('total overall', total);
     var result = div('indent');
     var childExpanders = [];
     function renderLineAndChildren(label, time, sub) {
@@ -2635,7 +2643,7 @@ function renderReport(report, timeDisplay, profile, editParams, indentation, tot
                 profile.expanded.delete(fullLabel);
         }
         if (hasChildren) {
-            var _a = __read(renderReport(sub, timeDisplay, profile, editParams, indentation + 1, total, false, fullLabel), 2), child_1 = _a[0], expander_1 = _a[1];
+            var _a = __read(renderReport(sub, timeDisplay, total, profile, editParams, indentation + 1, reportTotal, false, fullLabel), 2), child_1 = _a[0], expander_1 = _a[1];
             child_1.hidden = !visible;
             toggleVisibility = function () { return setVisibility(!visible, child_1); };
             setAllChildrenVisibility = function (newVisibility) {
@@ -2645,7 +2653,7 @@ function renderReport(report, timeDisplay, profile, editParams, indentation, tot
             toggleAllChildren = function () { return setAllChildrenVisibility(!visible); };
             result.push(child_1);
         }
-        var head = renderReportLine(label, displayReportTime(time, timeDisplay, total), toggleVisibility, toggleAllChildren, hasChildren, fullLabel, profile, editParams);
+        var head = renderReportLine(label, displayReportTime(time, total, timeDisplay, reportTotal), toggleVisibility, toggleAllChildren, hasChildren, fullLabel, profile, editParams);
         result.unshift(head);
         return [result, setAllChildrenVisibility];
     }
@@ -2718,8 +2726,8 @@ function reportFromParams(entries, params) {
         return null;
     if (endParse == 'fail' || endParse == 'prefix')
         return null;
-    var startDate = startParse[0];
-    var endDate = endParse[0];
+    var startDate = specToDate(startParse[0], now(), 'closest');
+    var endDate = specToDate(endParse[0], now(), 'closest');
     window.history.pushState(null, "", "report.html?" + renderParams(params));
     $('#startDate').val(params.start || '');
     $('#endDate').val(params.end || '');
@@ -2727,8 +2735,10 @@ function reportFromParams(entries, params) {
     document.getElementById('editableReport').checked = params.edit || false;
     if (params.timeDisplay != undefined)
         setRadio('timeDisplay', params.timeDisplay);
-    var report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels);
-    return edit ? report : flattenReport(report);
+    var _a = __read(makeReport(entries, startDate, endDate, labels), 2), report = _a[0], total = _a[1];
+    console.log('total', total);
+    var flattenedReport = edit ? report : flattenReport(report);
+    return [flattenedReport, total];
 }
 function shiftInterval(start, end, direction) {
     var startSpec = parseString(dateRule, start);
@@ -2825,14 +2835,14 @@ export function loadReport() {
             var newParams = __assign(__assign({}, params), { start: newStart, end: newEnd });
             render(newParams);
         }
-        function display(report, params) {
+        function display(report, total, params) {
             var newEditParams = (params.edit) ? addRedraw(editParams, function () { return render(params); }) : null;
-            displayReport(report, params.timeDisplay || 'total', newEditParams, profile);
+            displayReport(report, total, params.timeDisplay || 'total', newEditParams, profile);
         }
         function render(params) {
-            var report = reportFromParams(entries, params);
-            if (report != null) {
-                display(report, params);
+            var reportAndTotal = reportFromParams(entries, params);
+            if (reportAndTotal != null) {
+                display(reportAndTotal[0], reportAndTotal[1], params);
             }
         }
         var credentials, entries, profile, editParams;
@@ -2857,9 +2867,11 @@ export function loadReport() {
                     document.getElementsByName('timeDisplay').forEach(function (e) { return e.addEventListener('change', function () { return render(paramsFromInput()); }); });
                     $('#export').click(function () {
                         var params = paramsFromInput();
-                        var report = reportFromParams(entries, params);
-                        if (report != null) {
-                            display(report, params);
+                        var reportAndTotal = reportFromParams(entries, params);
+                        if (reportAndTotal != null) {
+                            var report = reportAndTotal[0];
+                            var total_1 = reportAndTotal[1];
+                            display(report, total_1, params);
                             exportReport(report);
                         }
                     });
@@ -2916,11 +2928,11 @@ function exportReport(report) {
     });
 }
 // Used in viewReport.ejs as well as from loadReport()
-export function displayReport(report, timeDisplay, editParams, profile) {
+export function displayReport(report, total, timeDisplay, editParams, profile) {
     if (editParams === void 0) { editParams = null; }
     if (profile === void 0) { profile = emptyProfile(); }
     $('#reportContainer').empty();
-    $('#reportContainer').append(renderReport(capReport(report), timeDisplay, profile, editParams)[0]);
+    $('#reportContainer').append(renderReport(capReport(report), timeDisplay, total, profile, editParams)[0]);
     //This is pretty ugly, let's just not do it...
     //renderChart(report, profile)
 }
