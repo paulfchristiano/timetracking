@@ -1523,15 +1523,6 @@ function oldDeserializeProfile(s) {
 function randInt(n) {
     return Math.floor(n * Math.random());
 }
-export function loadColors() {
-    var e = $("<input type='color' id='colorpicker'></input>");
-    var button = $("<div>Done!</div>");
-    $('#main').append(e);
-    $('#main').append(button);
-    button.click(function () {
-        console.log(e.val());
-    });
-}
 function HSVtoRGB(h, s, v) {
     var r, g, b, i, f, p, q, t;
     function round(x) {
@@ -2550,19 +2541,18 @@ function renderColorPicker(label, profile, callback) {
     var colorHex = colorToHex(getColor(label, profile));
     picker.setAttribute('value', colorHex);
     picker.addEventListener('change', function () {
-        console.log(picker.value);
         profile.colors.set(label, colorFromHex(picker.value));
         saveProfile(profile);
         callback();
     });
     return picker;
 }
-function renderReportLine(label, time, onClick, onShiftClick, hasChildren, fullLabel, profile, editParams) {
+function renderReportLine(label, timeString, onClick, onShiftClick, hasChildren, fullLabel, profile, editParams) {
     if (editParams === void 0) { editParams = null; }
     var childString = (hasChildren) ? ' (+)' : '';
     var childClass = (hasChildren) ? ' clickable' : '';
     var result = div('ReportLine');
-    var lineText = spanText("reportLineText" + (hasChildren ? ' clickable' : ''), "[" + renderDuration(time) + "] " + label + childString);
+    var lineText = spanText("reportLineText" + (hasChildren ? ' clickable' : ''), "[" + timeString + "] " + label + childString);
     lineText.addEventListener('click', function (e) {
         if (e.shiftKey)
             onShiftClick();
@@ -2606,14 +2596,26 @@ function joinPrefix(prefix, label) {
         return label;
     return prefix + "/" + label;
 }
-function renderReport(report, profile, editParams, indentation, total, expanded, prefix) {
+var second_ms = 1000;
+var minute_ms = 60 * second_ms;
+var hour_ms = 60 * minute_ms;
+var day_ms = 24 * hour_ms;
+var week_ms = 7 * day_ms;
+function displayReportTime(time, display, total) {
+    switch (display) {
+        case 'total': return renderDuration(time);
+        case 'daily': return renderDuration(time * (day_ms) / total) + "/d";
+        case 'weekly': return renderDuration(time * week_ms / total) + "/w";
+        case 'percent': return renderPercentage(time / total);
+    }
+}
+function renderReport(report, timeDisplay, profile, editParams, indentation, total, expanded, prefix) {
     var e_49, _a, e_50, _b;
     if (editParams === void 0) { editParams = null; }
     if (indentation === void 0) { indentation = 0; }
-    if (total === void 0) { total = null; }
+    if (total === void 0) { total = totalReportTime(report); }
     if (expanded === void 0) { expanded = true; }
     if (prefix === void 0) { prefix = ''; }
-    var totalNotNull = (total === null) ? totalReportTime(report) : total;
     var result = div('indent');
     var childExpanders = [];
     function renderLineAndChildren(label, time, sub) {
@@ -2633,7 +2635,7 @@ function renderReport(report, profile, editParams, indentation, total, expanded,
                 profile.expanded.delete(fullLabel);
         }
         if (hasChildren) {
-            var _a = __read(renderReport(sub, profile, editParams, indentation + 1, total, false, fullLabel), 2), child_1 = _a[0], expander_1 = _a[1];
+            var _a = __read(renderReport(sub, timeDisplay, profile, editParams, indentation + 1, total, false, fullLabel), 2), child_1 = _a[0], expander_1 = _a[1];
             child_1.hidden = !visible;
             toggleVisibility = function () { return setVisibility(!visible, child_1); };
             setAllChildrenVisibility = function (newVisibility) {
@@ -2643,7 +2645,7 @@ function renderReport(report, profile, editParams, indentation, total, expanded,
             toggleAllChildren = function () { return setAllChildrenVisibility(!visible); };
             result.push(child_1);
         }
-        var head = renderReportLine(label, time, toggleVisibility, toggleAllChildren, hasChildren, fullLabel, profile, editParams);
+        var head = renderReportLine(label, displayReportTime(time, timeDisplay, total), toggleVisibility, toggleAllChildren, hasChildren, fullLabel, profile, editParams);
         result.unshift(head);
         return [result, setAllChildrenVisibility];
     }
@@ -2703,6 +2705,8 @@ function renderParams(params) {
         parts.push("label=" + params.label);
     if (params.edit !== undefined)
         parts.push("edit=" + (params.edit ? 'true' : 'false'));
+    if (params.timeDisplay !== undefined)
+        parts.push("display=" + params.timeDisplay);
     return parts.join('&');
 }
 function reportFromParams(entries, params) {
@@ -2721,6 +2725,8 @@ function reportFromParams(entries, params) {
     $('#endDate').val(params.end || '');
     $('#topLabel').val(params.label || '');
     document.getElementById('editableReport').checked = params.edit || false;
+    if (params.timeDisplay != undefined)
+        setRadio('timeDisplay', params.timeDisplay);
     var report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels);
     return edit ? report : flattenReport(report);
 }
@@ -2739,6 +2745,49 @@ function shiftInterval(start, end, direction) {
     }
     return [shiftAndRender(startDate), shiftAndRender(endDate)];
 }
+function coerceTimeDisplay(s) {
+    if (s == 'weekly' || s == 'daily' || s == 'total' || s == 'percent')
+        return s;
+    return undefined;
+}
+function readRadio(name) {
+    var e_53, _a;
+    var nodes = document.getElementsByName(name);
+    try {
+        for (var nodes_1 = __values(nodes), nodes_1_1 = nodes_1.next(); !nodes_1_1.done; nodes_1_1 = nodes_1.next()) {
+            var node = nodes_1_1.value;
+            var n = node;
+            if (n.checked)
+                return n.value;
+        }
+    }
+    catch (e_53_1) { e_53 = { error: e_53_1 }; }
+    finally {
+        try {
+            if (nodes_1_1 && !nodes_1_1.done && (_a = nodes_1.return)) _a.call(nodes_1);
+        }
+        finally { if (e_53) throw e_53.error; }
+    }
+    return null;
+}
+function setRadio(name, value) {
+    var e_54, _a;
+    var nodes = document.getElementsByName(name);
+    try {
+        for (var nodes_2 = __values(nodes), nodes_2_1 = nodes_2.next(); !nodes_2_1.done; nodes_2_1 = nodes_2.next()) {
+            var node = nodes_2_1.value;
+            var radio = node;
+            radio.checked = (radio.value == value);
+        }
+    }
+    catch (e_54_1) { e_54 = { error: e_54_1 }; }
+    finally {
+        try {
+            if (nodes_2_1 && !nodes_2_1.done && (_a = nodes_2.return)) _a.call(nodes_2);
+        }
+        finally { if (e_54) throw e_54.error; }
+    }
+}
 export function loadReport() {
     var _a;
     return __awaiter(this, void 0, void 0, function () {
@@ -2748,6 +2797,7 @@ export function loadReport() {
                 end: $('#endDate').val(),
                 label: $('#topLabel').val(),
                 edit: document.getElementById('editableReport').checked,
+                timeDisplay: coerceTimeDisplay(readRadio('timeDisplay'))
             };
         }
         function paramsFromURL(url) {
@@ -2756,9 +2806,9 @@ export function loadReport() {
                 start: params.get('start') || undefined,
                 end: params.get('end') || undefined,
                 label: params.get('label') || undefined,
-                edit: (params.get('edit') === 'true')
+                edit: (params.get('edit') === 'true'),
+                timeDisplay: coerceTimeDisplay(params.get('display'))
             };
-            console.log(result);
             return result;
         }
         function kd(e) {
@@ -2777,7 +2827,7 @@ export function loadReport() {
         }
         function display(report, params) {
             var newEditParams = (params.edit) ? addRedraw(editParams, function () { return render(params); }) : null;
-            displayReport(report, newEditParams, profile);
+            displayReport(report, params.timeDisplay || 'total', newEditParams, profile);
         }
         function render(params) {
             var report = reportFromParams(entries, params);
@@ -2804,6 +2854,7 @@ export function loadReport() {
                     });
                     $('#generate').click(function () { return render(paramsFromInput()); });
                     (_a = document.getElementById('editableReport')) === null || _a === void 0 ? void 0 : _a.addEventListener('click', function () { return render(paramsFromInput()); });
+                    document.getElementsByName('timeDisplay').forEach(function (e) { return e.addEventListener('change', function () { return render(paramsFromInput()); }); });
                     $('#export').click(function () {
                         var params = paramsFromInput();
                         var report = reportFromParams(entries, params);
@@ -2865,12 +2916,13 @@ function exportReport(report) {
     });
 }
 // Used in viewReport.ejs as well as from loadReport()
-export function displayReport(report, editParams, profile) {
+export function displayReport(report, timeDisplay, editParams, profile) {
     if (editParams === void 0) { editParams = null; }
     if (profile === void 0) { profile = emptyProfile(); }
     $('#reportContainer').empty();
-    $('#reportContainer').append(renderReport(capReport(report), profile, editParams)[0]);
-    renderChart(report, profile);
+    $('#reportContainer').append(renderReport(capReport(report), timeDisplay, profile, editParams)[0]);
+    //This is pretty ugly, let's just not do it...
+    //renderChart(report, profile)
 }
 function randomLinkID() {
     return Math.random().toString(36).substring(2, 8);

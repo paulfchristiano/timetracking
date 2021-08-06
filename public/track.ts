@@ -1151,16 +1151,6 @@ function randInt(n:number): number {
     return Math.floor(n * Math.random())
 }
 
-export function loadColors() {
-    const e = $(`<input type='color' id='colorpicker'></input>`)
-    const button = $(`<div>Done!</div>`)
-    $('#main').append(e)
-    $('#main').append(button)
-    button.click(function() {
-        console.log(e.val())
-    })
-}
-
 function HSVtoRGB(h:number, s:number, v:number): Color {
     var r, g, b, i, f, p, q, t;
     function round(x: number): number {
@@ -1903,7 +1893,6 @@ function renderColorPicker(label:Label, profile:Profile, callback:()=>void=() =>
     const colorHex = colorToHex(getColor(label, profile))
     picker.setAttribute('value', colorHex)
     picker.addEventListener('change', function() {
-        console.log(picker.value)
         profile.colors.set(label, colorFromHex(picker.value))
         saveProfile(profile)
         callback()
@@ -1913,7 +1902,7 @@ function renderColorPicker(label:Label, profile:Profile, callback:()=>void=() =>
 
 function renderReportLine(
     label:Label,
-    time:number,
+    timeString:string,
     onClick:() => void,
     onShiftClick:() => void,
     hasChildren:boolean,
@@ -1924,7 +1913,7 @@ function renderReportLine(
     const childString = (hasChildren) ? ' (+)' : ''
     const childClass = (hasChildren) ? ' clickable' : ''
     const result = div('ReportLine')
-    const lineText = spanText(`reportLineText${hasChildren ? ' clickable' : ''}`, `[${renderDuration(time)}] ${label}${childString}`)
+    const lineText = spanText(`reportLineText${hasChildren ? ' clickable' : ''}`, `[${timeString}] ${label}${childString}`)
     lineText.addEventListener('click', function(e) {
         if (e.shiftKey) onShiftClick()
         else onClick()
@@ -1975,16 +1964,33 @@ function joinPrefix(prefix:string, label:string) {
     return `${prefix}/${label}`
 }
 
+type TimeDisplayOption = 'weekly' | 'total' | 'daily' | 'percent'
+
+const second_ms = 1000
+const minute_ms = 60 * second_ms
+const hour_ms = 60 * minute_ms
+const day_ms = 24 * hour_ms
+const week_ms = 7 * day_ms
+
+function displayReportTime(time:number, display:TimeDisplayOption, total:number) {
+    switch (display) {
+        case 'total': return renderDuration(time)
+        case 'daily': return `${renderDuration(time * (day_ms) / total)}/d`
+        case 'weekly': return `${renderDuration(time * week_ms / total)}/w`
+        case 'percent': return renderPercentage(time/total)
+    }
+}
+
 function renderReport(
     report:Report,
+    timeDisplay:TimeDisplayOption,
     profile:Profile,
     editParams:EditParams|null = null,
     indentation:number=0,
-    total:number|null = null,
+    total:number = totalReportTime(report),
     expanded:boolean=true,
     prefix:string = '',
 ): [HTMLDivElement, (expand:boolean) => void] {
-    const totalNotNull = (total === null) ? totalReportTime(report) : total 
     const result = div('indent')
     const childExpanders:Array<(expand:boolean) => void> = []
     function renderLineAndChildren(label:Label, time:number, sub:Report): [HTMLDivElement[], (expand:boolean) => void] {
@@ -2002,7 +2008,7 @@ function renderReport(
             else profile.expanded.delete(fullLabel)
         }
         if (hasChildren) {
-            const [child, expander] = renderReport(sub, profile, editParams, indentation+1, total, false, fullLabel)
+            const [child, expander] = renderReport(sub, timeDisplay, profile, editParams, indentation+1, total, false, fullLabel)
             child.hidden = !visible
             toggleVisibility = () => setVisibility(!visible, child)
             setAllChildrenVisibility = function(newVisibility:boolean) {
@@ -2012,7 +2018,12 @@ function renderReport(
             toggleAllChildren = () => setAllChildrenVisibility(!visible)
             result.push(child)
         }
-        const head = renderReportLine(label, time, toggleVisibility, toggleAllChildren, hasChildren, fullLabel, profile, editParams)
+        const head = renderReportLine(
+            label,
+            displayReportTime(time, timeDisplay, total),
+            toggleVisibility, toggleAllChildren,
+            hasChildren, fullLabel, profile, editParams
+        )
         result.unshift(head)
         return [result, setAllChildrenVisibility]
     }
@@ -2031,6 +2042,7 @@ interface ReportParams {
     end?: string,
     label?: Label,
     edit?: boolean,
+    timeDisplay?: TimeDisplayOption,
 }
 
 function renderParams(params:ReportParams): string {
@@ -2039,6 +2051,7 @@ function renderParams(params:ReportParams): string {
     if (params.end !== undefined) parts.push(`end=${params.end}`)
     if (params.label !== undefined) parts.push(`label=${params.label}`)
     if (params.edit !== undefined) parts.push(`edit=${params.edit ? 'true' : 'false'}`)
+    if (params.timeDisplay !== undefined) parts.push(`display=${params.timeDisplay}`)
     return parts.join('&')
 }
 
@@ -2056,6 +2069,7 @@ function reportFromParams(entries:Entry[], params: ReportParams): Report|null {
     $('#endDate').val(params.end || '');
     $('#topLabel').val(params.label || '');
     (document.getElementById('editableReport') as HTMLInputElement).checked = params.edit || false
+    if (params.timeDisplay != undefined) setRadio('timeDisplay', params.timeDisplay)
     const report = makeReport(entries, specToDate(startDate, now(), 'closest'), specToDate(endDate, now(), 'closest'), labels)
     return edit ? report : flattenReport(report)
 }
@@ -2074,6 +2088,28 @@ function shiftInterval(start:string, end:string, direction:-1|1): [string, strin
     return [shiftAndRender(startDate), shiftAndRender(endDate)]
 }
 
+function coerceTimeDisplay(s:string|null): TimeDisplayOption|undefined {
+    if (s == 'weekly' || s == 'daily' || s == 'total' || s == 'percent') return s
+    return undefined
+}
+
+function readRadio(name:string): string|null {
+    const nodes = document.getElementsByName(name)
+    for (const node of nodes) {
+        const n = (node as HTMLInputElement)
+        if (n.checked) return n.value 
+    }
+    return null
+}
+
+function setRadio(name:string, value:string): void {
+    const nodes = document.getElementsByName(name)
+    for (const node of nodes) {
+        const radio = (node as HTMLInputElement);
+        radio.checked = (radio.value == value)
+    }
+}
+
 export async function loadReport() {
     const credentials = await getCredentials()
     const entries = await loadEntries(credentials)
@@ -2085,6 +2121,7 @@ export async function loadReport() {
             end: $('#endDate').val() as string|undefined,
             label: $('#topLabel').val() as string|undefined,
             edit: (document.getElementById('editableReport') as HTMLInputElement).checked,
+            timeDisplay: coerceTimeDisplay(readRadio('timeDisplay'))
         }
     }
     function paramsFromURL(url:string): ReportParams {
@@ -2093,9 +2130,9 @@ export async function loadReport() {
             start: params.get('start') || undefined,
             end: params.get('end') || undefined,
             label: params.get('label') || undefined,
-            edit: (params.get('edit') === 'true')
+            edit: (params.get('edit') === 'true'),
+            timeDisplay: coerceTimeDisplay(params.get('display'))
         }
-        console.log(result)
         return result
     }
 
@@ -2121,7 +2158,7 @@ export async function loadReport() {
 
     function display(report:Report, params: ReportParams) {
         const newEditParams = (params.edit) ? addRedraw(editParams, () => render(params)) : null
-        displayReport(report, newEditParams, profile)
+        displayReport(report, params.timeDisplay || 'total', newEditParams, profile)
     }
 
     function render(params: ReportParams) {
@@ -2136,6 +2173,7 @@ export async function loadReport() {
     });
     $('#generate').click(() => render(paramsFromInput()))
     document.getElementById('editableReport')?.addEventListener('click', () => render(paramsFromInput()))
+    document.getElementsByName('timeDisplay').forEach(e => e.addEventListener('change', () => render(paramsFromInput())))
     $('#export').click(function() {
         const params = paramsFromInput()
         const report = reportFromParams(entries, params)
@@ -2199,12 +2237,14 @@ function exportReport(report:Report) {
 // Used in viewReport.ejs as well as from loadReport()
 export function displayReport(
     report:Report,
+    timeDisplay:TimeDisplayOption,
     editParams:EditParams|null=null,
     profile:Profile=emptyProfile()
 ) {
     $('#reportContainer').empty()
-    $('#reportContainer').append(renderReport(capReport(report), profile, editParams)[0])
-    renderChart(report, profile)
+    $('#reportContainer').append(renderReport(capReport(report), timeDisplay, profile, editParams)[0])
+    //This is pretty ugly, let's just not do it...
+    //renderChart(report, profile)
 }
 
 
