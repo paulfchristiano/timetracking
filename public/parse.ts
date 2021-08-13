@@ -262,16 +262,26 @@ export type Action = {kind: 'raw'}
     | {kind: 'untilMinutesAgo', minutes: number}
     | {kind: 'until', time: DateSpec}
     | {kind: 'after', time: DateSpec}
+    | {kind: 'continueFirst', minutes: number}
     | {kind: 'continue'}
 
 export const rawAction:Action = {kind: 'raw'}
 
+function alias<T extends string>(main:T, synonyms:string[]):Rule<T> {
+    const options:string[] = [(main as string)].concat(synonyms)
+    return map(anyToken(options), () => main)
+}
+
+const continueRule:Rule<'continue'> = alias('continue', ['c'])
+
 const after:Rule<'after'> = map(anyToken(['after', 'since']), () => 'after')
 
 export const actionRule:Rule<Action> = any<Action>([
-    map(duration, x => ({kind: 'default', minutes: x})),
     map(raw('now'), () => ({kind: 'now'})),
-    map(raw('continue'), () => ({kind: 'continue'})),
+    map(continueRule, () => ({kind: 'continue'})),
+    seq([duration, continueRule], xs => ({kind: 'continueFirst', minutes: xs[0]})),
+    map(duration, x => ({kind: 'default', minutes: x})),
+    seq([raw('first'), duration, continueRule], xs => ({kind: 'continueFirst', minutes: xs[1]})),
     seq([any([raw('first'), raw('last')]), duration], xs => ({kind: xs[0] as ('first' | 'last'), minutes: xs[1] as number})),
     seq([raw('until'), duration, raw('ago')], xs => ({kind: 'untilMinutesAgo', minutes: xs[1]})),
     seq([any([raw('until'), after]), dateRule], xs => ({kind: xs[0] as ('until'| 'after'),  time: xs[1] as DateSpec})),

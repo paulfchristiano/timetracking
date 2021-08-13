@@ -186,6 +186,13 @@ function zoomedPopup(
             case 'continue':
                 callback({kind: 'delete', entry: entries[startIndex], shiftForward: entries[startIndex+1]})
                 break
+            case 'continueFirst':
+                callback({
+                    kind: 'move',
+                    entry: entries[startIndex],
+                    time: minutesAfter(entries[startIndex].time, a.minutes)
+                })
+                break
             default: assertNever(a)
         }
     })
@@ -358,6 +365,9 @@ export async function loadTracker(): Promise<void> {
                     case 'continue':
                         callback({kind: 'delete', entry: start, reflectBack: (startIndex > 0) ? entries[startIndex-1] : undefined})
                         break
+                    case 'continueFirst':
+                        callback({kind: 'move', entry: start, time: minutesAfter(start.time, a.minutes)})
+                        break
                     default: assertNever(a)
                 }
             })
@@ -392,6 +402,9 @@ export async function loadTracker(): Promise<void> {
                         break
                     case 'continue':
                         callback({kind: 'delete', entry: start, shiftForward: end})
+                        break
+                    case 'continueFirst':
+                        callback({kind: 'move', entry: start, time: minutesAfter(start.time, a.minutes)})
                         break
                     default: assertNever(a)
                 }

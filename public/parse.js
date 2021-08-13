@@ -274,11 +274,18 @@ function assertNever(value) {
     throw new Error("Shouldn't reach this case!");
 }
 export var rawAction = { kind: 'raw' };
+function alias(main, synonyms) {
+    var options = [main].concat(synonyms);
+    return map(anyToken(options), function () { return main; });
+}
+var continueRule = alias('continue', ['c']);
 var after = map(anyToken(['after', 'since']), function () { return 'after'; });
 export var actionRule = any([
-    map(duration, function (x) { return ({ kind: 'default', minutes: x }); }),
     map(raw('now'), function () { return ({ kind: 'now' }); }),
-    map(raw('continue'), function () { return ({ kind: 'continue' }); }),
+    map(continueRule, function () { return ({ kind: 'continue' }); }),
+    seq([duration, continueRule], function (xs) { return ({ kind: 'continueFirst', minutes: xs[0] }); }),
+    map(duration, function (x) { return ({ kind: 'default', minutes: x }); }),
+    seq([raw('first'), duration, continueRule], function (xs) { return ({ kind: 'continueFirst', minutes: xs[1] }); }),
     seq([any([raw('first'), raw('last')]), duration], function (xs) { return ({ kind: xs[0], minutes: xs[1] }); }),
     seq([raw('until'), duration, raw('ago')], function (xs) { return ({ kind: 'untilMinutesAgo', minutes: xs[1] }); }),
     seq([any([raw('until'), after]), dateRule], function (xs) { return ({ kind: xs[0], time: xs[1] }); }),
