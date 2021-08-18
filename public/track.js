@@ -2328,14 +2328,14 @@ export function mergeAndUpdate(xs, ys) {
     return { merged: merged, xUpdates: xUpdates, yUpdates: yUpdates };
 }
 function sendUpdates(updates, credentials) {
-    var s = serializeEntries(updates);
+    var s = encodeURIComponent(serializeEntries(updates));
     $.post("update?" + credentialParams(credentials), "entries=" + s);
 }
 function getRemoteEntries(credentials) {
     return __awaiter(this, void 0, void 0, function () {
         return __generator(this, function (_a) {
             return [2 /*return*/, new Promise(function (resolve, reject) {
-                    $.get("entries?" + credentialParams(credentials), function (s) { return resolve(deserializeEntries(s)); });
+                    $.get("entries?" + credentialParams(credentials), function (s) { return resolve(deserializeEntries(decodeURIComponent(s))); });
                 })];
         });
     });
@@ -2394,7 +2394,7 @@ function makeReport(entries, start, end, topLabels) {
                         var topLabel = topLabels_1_1.value;
                         var subLabel = matchLabel(topLabel, label);
                         if (t0 != t1 && subLabel != null)
-                            addToReport(label, dt, result);
+                            addToReport(subLabel, dt, result);
                     }
                 }
                 catch (e_43_1) { e_43 = { error: e_43_1 }; }
@@ -2618,8 +2618,6 @@ var hour_ms = 60 * minute_ms;
 var day_ms = 24 * hour_ms;
 var week_ms = 7 * day_ms;
 function displayReportTime(time, total, display, totalInReport) {
-    console.log('total', total);
-    console.log('time', time);
     switch (display) {
         case 'total': return renderDuration(time);
         case 'daily': return renderDuration(time * (day_ms) / total) + "/d";
@@ -2635,8 +2633,6 @@ profile, editParams, indentation, reportTotal, expanded, prefix) {
     if (reportTotal === void 0) { reportTotal = totalReportTime(report); }
     if (expanded === void 0) { expanded = true; }
     if (prefix === void 0) { prefix = ''; }
-    console.log('total in report', reportTotal);
-    console.log('total overall', total);
     var result = div('indent');
     var childExpanders = [];
     function renderLineAndChildren(label, time, sub) {
@@ -2749,7 +2745,6 @@ function reportFromParams(entries, params) {
     if (params.timeDisplay != undefined)
         setRadio('timeDisplay', params.timeDisplay);
     var _a = __read(makeReport(entries, startDate, endDate, labels), 2), report = _a[0], total = _a[1];
-    console.log('total', total);
     var flattenedReport = edit ? report : flattenReport(report);
     return [flattenedReport, total];
 }

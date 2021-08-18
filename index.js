@@ -194,6 +194,7 @@ app
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
+                console.log('updating!');
                 credentials = {
                     username: req.query.username,
                     hashedPassword: req.query.hashedPassword
@@ -205,7 +206,7 @@ app
             case 2:
                 success = _b.sent();
                 if (success) {
-                    entries = deserializeEntries(req.body.entries);
+                    entries = deserializeEntries(decodeURIComponent(req.body.entries));
                     try {
                         for (entries_1 = __values(entries), entries_1_1 = entries_1.next(); !entries_1_1.done; entries_1_1 = entries_1.next()) {
                             entry = entries_1_1.value;
@@ -219,6 +220,7 @@ app
                         }
                         finally { if (e_4) throw e_4.error; }
                     }
+                    res.send('ok');
                 }
                 else {
                     res.send('username+password not found');
@@ -252,7 +254,7 @@ app
             case 3:
                 entries = _a.sent();
                 s = serializeEntries(entries);
-                res.send(s);
+                res.send(encodeURIComponent(s));
                 return [3 /*break*/, 5];
             case 4:
                 res.send('username+password not found');
@@ -297,8 +299,6 @@ app
                 result = _a.sent();
                 if (result.length < 1)
                     res.send('Report not found');
-                console.log('!');
-                console.log(result);
                 res.render('viewReport', { report: encodeURIComponent(result[0].serialized) });
                 return [2 /*return*/];
         }

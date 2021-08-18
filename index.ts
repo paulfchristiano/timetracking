@@ -111,6 +111,7 @@ app
     }
     })
     .post('/update', async (req: any, res:any) => {
+        console.log('updating!')
         const credentials:Credentials = {
             username:req.query.username,
             hashedPassword:req.query.hashedPassword
@@ -118,10 +119,11 @@ app
         try {
             const success:boolean = await userExists(credentials)
             if (success) {
-                const entries = deserializeEntries(req.body.entries)
+                const entries = deserializeEntries(decodeURIComponent(req.body.entries))
                 for (const entry of entries) {
                     updateEntry(credentials, entry)
                 }
+                res.send('ok')
             } else {
                 res.send('username+password not found')
             }
@@ -139,7 +141,7 @@ app
             if (success) {
                 const entries = await getEntries(credentials)
                 const s = serializeEntries(entries)
-                res.send(s) 
+                res.send(encodeURIComponent(s))
             } else {
                 res.send('username+password not found')
             }
@@ -165,8 +167,6 @@ app
             WHERE id = ${req.params.id}
         `
         if (result.length < 1) res.send('Report not found')
-        console.log('!')
-        console.log(result)
         res.render('viewReport', {report: encodeURIComponent(result[0].serialized)}) 
     })
     .listen(PORT, () => console.log(`Listening on ${ PORT }`))

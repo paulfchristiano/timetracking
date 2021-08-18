@@ -1752,13 +1752,13 @@ export function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdat
 }
 
 function sendUpdates(updates:Entry[], credentials:Credentials) {
-    const s = serializeEntries(updates)
+    const s = encodeURIComponent(serializeEntries(updates))
     $.post(`update?${credentialParams(credentials)}`, `entries=${s}`)
 }
 
 async function getRemoteEntries(credentials:Credentials): Promise<Entry[]> {
     return new Promise(function(resolve, reject) {
-        $.get(`entries?${credentialParams(credentials)}`, s => resolve(deserializeEntries(s)))
+        $.get(`entries?${credentialParams(credentials)}`, s => resolve(deserializeEntries(decodeURIComponent(s))))
     }) 
 }
 
@@ -1811,7 +1811,7 @@ function makeReport(entries:Entry[], start:Date, end:Date, topLabels:Label[]): [
             total += dt
             for (const topLabel of topLabels) {
                 const subLabel:string|null = matchLabel(topLabel, label)
-                if (t0 != t1 && subLabel != null) addToReport(label, dt, result)
+                if (t0 != t1 && subLabel != null) addToReport(subLabel, dt, result)
             }
         }
     }
@@ -1994,8 +1994,6 @@ function displayReportTime(
     display:TimeDisplayOption,
     totalInReport:number,
 ) {
-    console.log('total', total)
-    console.log('time', time)
     switch (display) {
         case 'total': return renderDuration(time)
         case 'daily': return `${renderDuration(time * (day_ms) / total)}/d`
@@ -2015,8 +2013,6 @@ function renderReport(
     expanded:boolean=true,
     prefix:string = '',
 ): [HTMLDivElement, (expand:boolean) => void] {
-    console.log('total in report', reportTotal)
-    console.log('total overall', total)
     const result = div('indent')
     const childExpanders:Array<(expand:boolean) => void> = []
     function renderLineAndChildren(label:Label, time:number, sub:Report): [HTMLDivElement[], (expand:boolean) => void] {
@@ -2097,7 +2093,6 @@ function reportFromParams(entries:Entry[], params: ReportParams): [Report, numbe
     (document.getElementById('editableReport') as HTMLInputElement).checked = params.edit || false
     if (params.timeDisplay != undefined) setRadio('timeDisplay', params.timeDisplay)
     const [report, total] = makeReport(entries, startDate, endDate, labels)
-    console.log('total', total)
     const flattenedReport = edit ? report : flattenReport(report)
     return [flattenedReport, total]
 }
