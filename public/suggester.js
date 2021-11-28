@@ -15,21 +15,23 @@ var __read = (this && this.__read) || function (o, n) {
     return ar;
 };
 import { Matcher } from './matcher.js';
-import { rawAction, actionRule, parseString } from './parse.js';
+import { actionRule, parseString } from './parse.js';
 var InputBox = /** @class */ (function () {
-    function InputBox(universe, elem) {
+    function InputBox(prefixRule, raw, universe, elem) {
         var _this = this;
+        this.prefixRule = prefixRule;
+        this.raw = raw;
         this.universe = universe;
         this.elem = elem;
         this.suggestions = [];
         this.selected = null;
         this.submit = function () { };
         this.matcher = new Matcher(universe);
-        elem.empty();
-        this.inputElement = makeElement('input', ['input']);
+        this.inputElement = document.createElement('input');
+        this.inputElement.setAttribute('class', 'input');
         elem.append(this.inputElement);
-        this.inputElement.keydown(function (e) { return _this.keydown(e); });
-        this.inputElement.keyup(function (e) { return _this.keyup(e); });
+        this.inputElement.addEventListener('keydown', function (e) { return _this.keydown(e); });
+        this.inputElement.addEventListener('keyup', function (e) { return _this.keyup(e); });
         this.suggestionElement = makeElement('div', ['suggestions']);
         elem.append(this.suggestionElement);
     }
@@ -40,7 +42,7 @@ var InputBox = /** @class */ (function () {
         this.inputElement.focus();
     };
     InputBox.prototype.reset = function () {
-        this.inputElement.val('');
+        this.inputElement.value = '';
         this.refresh();
     };
     InputBox.prototype.setUniverse = function (universe) {
@@ -67,16 +69,18 @@ var InputBox = /** @class */ (function () {
                 this.shiftSelection(direction);
                 var suggestion = this.currentSuggestion();
                 if (suggestion !== undefined)
-                    this.inputElement.val(suggestion);
+                    this.inputElement.value = suggestion;
                 e.preventDefault();
+                if (this.suggestions.length > 0)
+                    e.stopPropagation();
                 break;
         }
     };
     InputBox.prototype.enter = function () {
         var s = this.getText();
-        var m = parseString(actionRule, this.getText());
+        var m = parseString(this.prefixRule, this.getText());
         if (m == 'prefix' || m == 'fail') {
-            this.submit(rawAction, s);
+            this.submit(this.raw, s);
         }
         else {
             this.submit(m[0], m[2].trim());
@@ -103,7 +107,7 @@ var InputBox = /** @class */ (function () {
             var div = suggestionDiv(suggestion, i == this_1.selected);
             this_1.suggestionElement.append(div);
             div.click(function () {
-                suggester.inputElement.val(suggestion);
+                suggester.inputElement.value = suggestion;
                 suggester.selected = i;
                 suggester.enter();
             });
@@ -139,7 +143,7 @@ var InputBox = /** @class */ (function () {
         this.render();
     };
     InputBox.prototype.getText = function () {
-        return (this.inputElement.val() || '');
+        return this.inputElement.value || '';
     };
     // Should be able to call it constantly, doesn't change state
     InputBox.prototype.refresh = function () {

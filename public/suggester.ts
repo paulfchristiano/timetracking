@@ -1,34 +1,36 @@
 import { Matcher } from './matcher.js'
-import { rawAction, actionRule, parseString, Action } from './parse.js'
+import { actionRule, parseString, Action, Rule } from './parse.js'
 
 type JQE = JQuery<HTMLElement>
 
-export class InputBox {
+export class InputBox<T> {
     private suggestions:string[] = [];
     private selected:number|null = null;
-    private submit:(a:Action, s:string) => void = () => {}
+    private submit:(a:T, s:string) => void = () => {}
     private matcher:Matcher;
-    public readonly inputElement:JQE;
+    public readonly inputElement:HTMLInputElement;
     public readonly suggestionElement:JQE;
     constructor (
+        private prefixRule:Rule<T>,
+        private raw:T,
         private universe:string[],
         public readonly elem:JQE,
     ) {
 
         this.matcher = new Matcher(universe)
-        elem.empty()
 
-        this.inputElement = makeElement('input', ['input'])
+        this.inputElement = document.createElement('input')
+        this.inputElement.setAttribute('class', 'input')
 
         elem.append(this.inputElement)
-        this.inputElement.keydown(e => this.keydown(e))
-        this.inputElement.keyup(e => this.keyup(e))
+        this.inputElement.addEventListener('keydown', e => this.keydown(e))
+        this.inputElement.addEventListener('keyup', e => this.keyup(e))
 
         this.suggestionElement = makeElement('div', ['suggestions'])
         elem.append(this.suggestionElement)
     }
 
-    bind(f:(a:Action, s:string) => void) {
+    bind(f:(a:T, s:string) => void) {
         this.submit = f
     }
 
@@ -37,7 +39,7 @@ export class InputBox {
     }
 
     reset() {
-        this.inputElement.val('')
+        this.inputElement.value = ''
         this.refresh()
     }
 
@@ -66,17 +68,18 @@ export class InputBox {
                 const direction:1|-1 = (e.keyCode == 38) ? -1 : 1
                 this.shiftSelection(direction)
                 const suggestion:string|undefined = this.currentSuggestion()
-                if (suggestion !== undefined) this.inputElement.val(suggestion)
+                if (suggestion !== undefined) this.inputElement.value = suggestion
                 e.preventDefault()
+                if (this.suggestions.length > 0) e.stopPropagation()
                 break
         }
     }
 
     enter() {
         const s = this.getText()
-        const m = parseString(actionRule, this.getText())
+        const m = parseString(this.prefixRule, this.getText())
         if (m == 'prefix' || m == 'fail') {
-            this.submit(rawAction, s)
+            this.submit(this.raw, s)
         } else {
             this.submit(m[0], m[2].trim())
         }
@@ -104,7 +107,7 @@ export class InputBox {
             const div = suggestionDiv(suggestion, i == this.selected)
             this.suggestionElement.append(div)
             div.click(function() {
-                suggester.inputElement.val(suggestion)
+                suggester.inputElement.value = suggestion
                 suggester.selected = i
                 suggester.enter()
             })
@@ -137,7 +140,7 @@ export class InputBox {
     }
 
     getText(): string {
-        return (this.inputElement.val() || '') as string
+        return this.inputElement.value || ''
     }
 
     // Should be able to call it constantly, doesn't change state

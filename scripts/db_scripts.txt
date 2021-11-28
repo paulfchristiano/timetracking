@@ -13,3 +13,8 @@ CREATE TABLE entries (
     deleted BOOLEAN NOT NULL,
     CONSTRAINT uniqueness UNIQUE(username, id)
 );
+
+CREATE TABLE reports (
+    id TEXT PRIMARY KEY,
+    serialized TEXT NOT NULL
+);

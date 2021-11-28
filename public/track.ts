@@ -1,9 +1,8 @@
 import e from 'express'
-import { Callbacks, data, readyException } from 'jquery'
+import { Callbacks, data, htmlPrefilter, isArray, map, readyException } from 'jquery'
 import { InputBox } from './suggester.js'
-import { DateSpec, Action, dateRule, parseString } from './parse.js'
+import { DateSpec, Action, dateRule, parseString, actionRule, emptyRule } from './parse.js'
 import { Entry, Label, serializeEntry, serializeEntries, deserializeEntry, deserializeEntries, uid, newUID, makeNewEntry } from './entries.js'
-
 
 function* enumfrom<T>(xs:T[], i:number, j:number): Generator<[number, T]> {
     for (let k = i; k < j; k++) yield [k, xs[k]]
@@ -29,11 +28,29 @@ function calendarSpan(
 }
 
 
-function labelPopup(label:Label, callback:(update:TimeUpdate) => void): void {
-    $('#popup').attr('active', 'true')
+function labelPopup(label:Label, callback:(update:TimeUpdate) => void, entries:EntryList): void {
+    function dismiss() {
+        $('#renamePopup').attr('active', 'false')
+    }
+    $('#renamePopup').attr('active', 'true')
     $('#popuplabel').text(label)
     $('#newlabel').empty()
-    $('#newlabel').append(inputAfterColon('Rename to', '', s => callback({kind: 'bulkRename', from: label, to: s})))
+    $('#newlabel').html('Rename to: ')
+    const e = div('inputwrapper')
+    $('#newlabel').append(e)
+    const input = new InputBox(emptyRule, null, getDistinctLabels(entries), $(e))
+    input.inputElement.setAttribute('class', 'wide')
+    input.bind(function (a, s) {
+        callback({kind: 'bulkRename', from: label, to: s, moveChildren: $('#movechildren').prop('checked')})
+        dismiss()
+    })
+    input.focus()
+    $('#doneButton').unbind('click')
+    $('#doneButton').bind('click', dismiss)
+    $('#renamePopup').unbind('keydown')
+    $('#renamePopup').keydown(function(e) {
+        if (e.keyCode == 27) dismiss()
+    })
     $('#movechildren').prop('checked', true)
 }
 
@@ -98,18 +115,18 @@ function zoomedPopup(
             $('#minical').append(elem)
         }
     }
-    const input = new InputBox(getDistinctLabels(entryList), $('.inputwrapper'))
+    const input = new InputBox(actionRule, {kind: 'raw'}, getDistinctLabels(entryList), $('.inputwrapper'))
     input.bind((a, s) => {
         switch (a.kind) {
             case 'raw':
                 callback({kind: 'relabel', label: s, before: entries[endIndex-1], after: entries[endIndex]})
                 break
-            case 'number':
+            case 'default':
                 callback({
                     kind: 'split',
                     before: entries[endIndex-1],
                     after: entries[endIndex],
-                    time: minutesAfter(entries[endIndex-1].time, a.number),
+                    time: minutesAfter(entries[endIndex-1].time, a.minutes),
                     labelBefore: s
                 })
                 break
@@ -120,6 +137,24 @@ function zoomedPopup(
                     after: entries[endIndex],
                     time: minutesAfter(entries[endIndex].time, -a.minutes),
                     labelAfter: s
+                })
+                break
+            case 'afterFirstMinutes':
+                callback({
+                    kind: 'split',
+                    before: entries[startIndex],
+                    after: entries[startIndex+1],
+                    time: minutesAfter(entries[endIndex].time, a.minutes),
+                    labelAfter: s
+                })
+                break
+            case 'untilMinutesAgo':
+                callback({
+                    kind: 'split',
+                    before: entries[startIndex],
+                    after: entries[startIndex+1],
+                    time: minutesAfter(entries[endIndex].time, -a.minutes),
+                    labelBefore: s
                 })
                 break
             case 'first':
@@ -144,11 +179,21 @@ function zoomedPopup(
                     kind: 'split',
                     before: entries[startIndex],
                     after: entries[startIndex+1],
-                    time: specToDate(a.time, entries[startIndex].time, 'next'),
+                    time: specToDate(a.time, entries[startIndex+1].time, 'previous'),
                     labelAfter: s
                 })
                 break
             case 'now':
+                break
+            case 'continue':
+                callback({kind: 'delete', entry: entries[startIndex], shiftForward: entries[startIndex+1]})
+                break
+            case 'continueFirst':
+                callback({
+                    kind: 'move',
+                    entry: entries[startIndex],
+                    time: minutesAfter(entries[startIndex].time, a.minutes)
+                })
                 break
             default: assertNever(a)
         }
@@ -183,6 +228,9 @@ function zoomedPopup(
 }
 
 function renderDuration(ms:number): string {
+    if (ms < 0) {
+        return `-${renderDuration(-ms)}`
+    }
     if (ms < 1000) {
         return `${ms}ms`
     }
@@ -209,20 +257,26 @@ function twoDigits(n:number): string {
 }
 
 function specToDate(spec:DateSpec, anchor:Date, rel:'next'|'previous'|'closest'): Date {
-    const candidate = new Date(anchor)
-    candidate.setMinutes(spec.minutes)
+    if (spec == 'now') return now()
+    const copiedAnchor = new Date(anchor)
+    copiedAnchor.setMinutes(spec.minutes)
     let best:Date = new Date(anchor);
     let bestDiff:number|null = null;
     const month = (spec.month === undefined) ? anchor.getMonth() : spec.month
-    candidate.setMonth(month)
+    copiedAnchor.setMonth(month)
     const hours:number = (spec.hours == 12) ? 0 : spec.hours
-    const dateCandidates:number[] = (spec.day === undefined) ? [-1, 0, 1].map(x => anchor.getDate() + x) : [spec.day]
+    const year:number = spec.year || anchor.getFullYear()
+    const dateCandidates:number[] = (spec.day === undefined)
+        ? [-1, 0, 1].map(x => anchor.getDate() + x)
+        : [spec.day + (spec.dayOffset || 0)]
     const ampmCandidates:('am'|'pm')[] = (spec.ampm === undefined) ? ['am', 'pm'] : [spec.ampm]
     const hourCandidates:number[] = ampmCandidates.map(x => (x == 'am') ? hours : (hours+12)%24)
     for (const date of dateCandidates) {
         for (const hours of hourCandidates) {
+            const candidate = new Date(copiedAnchor)
             candidate.setDate(date)
             candidate.setHours(hours)
+            candidate.setFullYear(year)
             const diff = candidate.getTime() - anchor.getTime()
             const absDiff = Math.abs(diff)
             const isValid = (rel=='closest') || (rel == 'next' && diff > 0) || (rel == 'previous' && diff < 0)
@@ -254,6 +308,12 @@ function applyAndSave(
     return displayUpdates
 }
 
+function div(cls:string): HTMLDivElement {
+    const result = document.createElement('div')
+    result.setAttribute('class', cls)
+    return result
+}
+
 export async function loadTracker(): Promise<void> {
     const credentials:Credentials = await getCredentials()
     const profile:Profile = loadProfile()
@@ -263,15 +323,21 @@ export async function loadTracker(): Promise<void> {
         saveEntries(rawEntries)
     }
     const entries = new EntryList(rawEntries)
-    let focused:Entry|null = null;
+    let focused:number|null = null;
+    let focusedEntry:Entry|null = null;
+    const entriesToShow = maxEntriesToShow()
     function callback(update:TimeUpdate) {
         const displayUpdates = applyAndSave(entries, update, credentials)
         renderUpdates(displayUpdates)
     }
-    function startInput(elem:JQE, start:Entry, end:Entry|null): void {
+    //TODO: these index manipulations are going to go badly when things are added and removed and so on
+    function startInput(elem:HTMLDivElement, startIndex:number): InputBox<Action> {
         $('.inputwrapper').empty()
-        const x = new InputBox(getDistinctLabels(entries), elem)
-        x.focus()
+        focused = startIndex
+        const x = new InputBox(actionRule, {kind: 'raw'}, getDistinctLabels(entries), $(elem))
+        const start:Entry = entries.entries[startIndex]
+        const end:Entry|null = (startIndex < entries.entries.length - 1) ? entries.entries[startIndex+1] : null
+        focusedEntry = end
         if (end == null) {
             x.bind((a, s) => {
                 switch (a.kind) {
@@ -288,8 +354,14 @@ export async function loadTracker(): Promise<void> {
                             {kind: 'append', time:new Date(), before:s}
                         ]})
                         break
-                    case 'number':
-                        callback({kind: 'append', before: s, time: minutesAfter(start.time, a.number)})
+                    case 'untilMinutesAgo':
+                        callback({kind: 'append', before: (s.length == 0) ? undefined : s, time: minutesAfter(new Date(), -a.minutes)})
+                        break
+                    case 'afterFirstMinutes':
+                        callback({kind: 'append', after: (s.length == 0) ? undefined : s, time: minutesAfter(start.time, a.minutes)})
+                        break
+                    case 'default':
+                        callback({kind: 'append', before: s, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'now':
                         callback({kind: 'relabel', label: s, before:start})
@@ -300,6 +372,12 @@ export async function loadTracker(): Promise<void> {
                     case 'after':
                         callback({kind: 'append', after: s, time: specToDate(a.time, new Date(), 'previous')})
                         break
+                    case 'continue':
+                        callback({kind: 'delete', entry: start, reflectBack: (startIndex > 0) ? entries.entries[startIndex-1] : undefined})
+                        break
+                    case 'continueFirst':
+                        callback({kind: 'move', entry: start, time: minutesAfter(start.time, a.minutes)})
+                        break
                     default: assertNever(a)
                 }
             })
@@ -307,35 +385,48 @@ export async function loadTracker(): Promise<void> {
             x.bind((a, s) => {
                 switch (a.kind) {
                     case 'raw':
-                        callback({kind: 'relabel', label: s, before: start, after: end})
+                        if (s != '') callback({kind: 'relabel', label: s, before: start, after: end})
                         break
                     case 'first':
                         callback({kind: 'spliceSplit', label: s, before: start, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'now':
                         break
-                    case 'number':
-                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.number)})
+                    case 'default':
+                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'last':
                         callback({kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
+                        break
+                    case 'untilMinutesAgo':
+                        callback({kind: 'split', labelBefore: s, before: start, after: end, time: minutesAfter(end.time, -a.minutes)})
+                        break
+                    case 'afterFirstMinutes':
+                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: minutesAfter(start.time, a.minutes)})
                         break
                     case 'until':
                         callback({kind: 'spliceSplit', label: s, before: start, time: specToDate(a.time, start.time, 'next')})
                         break
                     case 'after':
-                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: specToDate(a.time, start.time, 'next')})
+                        callback({kind: 'split', labelAfter: s, before: start, after: end, time: specToDate(a.time, end.time, 'previous')})
+                        break
+                    case 'continue':
+                        callback({kind: 'delete', entry: start, shiftForward: end})
+                        break
+                    case 'continueFirst':
+                        callback({kind: 'move', entry: start, time: minutesAfter(start.time, a.minutes)})
                         break
                     default: assertNever(a)
                 }
             })
         }
+        return x
     }
-    let heartbeats:[Date, JQE][] = []
-    function setTimer(start:Date, elem:JQE): void {
+    let heartbeats:[Date, HTMLDivElement][] = []
+    function setTimer(start:Date, elem:HTMLDivElement): void {
         const diff = new Date().getTime() - start.getTime()
         if (diff > 1000)
-            elem.text(renderDuration(new Date().getTime() - start.getTime()))
+            elem.textContent = renderDuration(new Date().getTime() - start.getTime())
     }
     setInterval(function() {
         for (const [start, elem] of heartbeats) {
@@ -359,108 +450,133 @@ export async function loadTracker(): Promise<void> {
     }
     function render() {
         heartbeats = []
-        const elem = $('#inputs')
-        elem.html('')
-        for (const [end, start] of listPairsAndEnds(revit(entries.entries))) {
-            //end = entries[i]
+        const toStart:Array<() => void> = [];
+        const elem = document.getElementById('inputs')
+        const elements:HTMLDivElement[] = []
+        const elemsByIndex:Map<number, HTMLDivElement> = new Map()
+        if (elem != null) elem.innerHTML = ''
+        $('#inputs').unbind('keydown')
+        $('#inputs').bind('keydown', function(e) {
+            function focusOnIndex(newIndex:number) {
+                const elem = elemsByIndex.get(newIndex)
+                if (elem != null) {
+                    const inputBox = startInput(elem, newIndex)
+                    inputBox.focus()
+                }
+            }
+            if (e.keyCode == 38 && focused !== null) {
+                focusOnIndex(focused+1)
+            } else if (e.keyCode == 40 && focused !== null) {
+                focusOnIndex(focused-1)
+            }
+        })
+        for (let i = entries.entries.length-1; i >= 0 && i >= entries.entries.length - entriesToShow; i--) {
+            const end:Entry|null = (i == entries.entries.length - 1) ? null : entries.entries[i+1]
+            const start:Entry|null = entries.entries[i]
             if (end == null) {
-                const row = $(`<div class='trackertimerow'></div>`)
-                row.append('<div class="nowdot"></div>')
-                row.append($(`<div class='timelabel'></div>`))
-                elem.append(row)
+                const row = div('trackertimerow')
+                row.appendChild(div('nowdot'))
+                row.appendChild(div('timelabel'))
+                elements.push(row)
             } else {
-                /*
-                const e = $(`<span class='clickable'>[${renderTime(end.time)}]</span>`)
-                const f = $('<div></div>')
-                f.append(e)
-                elem.append(f)
-                */
-                const row = $(`<div class='trackertimerow'></div>`)
-                row.append('<div class="dot"></div>')
-                const time = $(`<div class='timelabel' contenteditable='true'>${renderTime(end.time)}</div>`)
-                time.blur(function() {
-                    time.text(renderTime(end.time))
+                const row = div('trackertimerow')
+                row.appendChild(div('dot'))
+                const time = div('timelabel')
+                time.textContent = renderTime(end.time)
+                time.setAttribute('contenteditable', 'true')
+                time.addEventListener('blur', function() {
+                    time.textContent = renderTime(end.time)
                 })
-                time.keydown(function(e) {
+                time.addEventListener('keydown', function(e) {
                     if (e.keyCode == 13) {
                         e.preventDefault()
-                        const date = parseTime(time.text(), end.time, 'closest')
+                        const date = parseTime(time.textContent || '', end.time, 'closest')
                         if (date != 'error') {
                             callback({kind: 'move', entry: end, time: date})
                         }
                     }
                 })
-                row.append(time)
-                elem.append(row)
+                row.appendChild(time)
+                elements.push(row)
             }
-            //TODO unify these two cases
-            if (start != null && end != null) {
-                const label = labelFrom(start, end)
-                const style = `background: ${renderColor(getColor(label, profile))}; float: left`
-                const row = $(`<div class='trackerrow'></div>`)
-                const text = $(`<div class='trackerlabel'></div>`)
-                text.append($(`<div>${renderLabel(label)}</div>`))
-                text.append($(`<div>${renderDuration(end.time.getTime() - start.time.getTime())}</div>`))
-                const e = $(`<div class="line" style='${style}''></div>`)
-                row.append(e)
-                row.append(text)
-                const inputBuffer = $(`<div class='inputbuffer'></div>`)
-                const inputWrapper = $(`<div class='inputwrapper'></div>`)
-                inputBuffer.append(inputWrapper)
+            if (start != null) {
+                const label = (end == null) ? start.after || 'TBD' : labelFrom(start, end)
+                const color:string = (end == null) ? 'gray' : renderColor(getColor(label, profile))
+                const row = div('trackerrow')
+                const text = div('trackerlabel')
+                const labelDiv = div('labeldiv')
+                labelDiv.append(...renderLabel(label))
+                const durationDiv = div('durationdiv')
+                if (end == null) {
+                    setTimer(start.time, durationDiv)
+                    heartbeats.push([start.time, durationDiv])
+                } else {
+                    durationDiv.textContent = renderDuration(end.time.getTime() - start.time.getTime()) 
+                }
+                text.append(labelDiv, durationDiv)
+                const line = div('line')
+                line.style.backgroundColor = color
+                line.style.float = 'left'
+                row.append(line, text)
+                const inputBuffer = div('inputbuffer')
+                const inputWrapper = div('inputwrapper')
+                inputBuffer.appendChild(inputWrapper)
                 row.append(inputBuffer)
-                text.click(() => {
-                    startInput(inputWrapper, start, end)
-                    focused = end;
+                text.addEventListener('click', () => {
+                    startInput(inputWrapper, i).focus()
                 })
-                elem.append(row)
-                if (focused == end) startInput(inputWrapper, start, end)
-            }
-            if (start != null && end == null) {
-                const label = start.after || 'TBD'
-                const style = `background: gray; float: left`
-                const row = $(`<div class='trackerrow'></div>`)
-                const text = $(`<div class='trackerlabel'></div>`)
-                text.append($(`<div>${renderLabel(label)}</div>`))
-                const timer = $(`<div id='runningtimer'></div>`)
-                setTimer(start.time, timer)
-                text.append(timer)
-                heartbeats.push([start.time, timer])
-                const e = $(`<div class="line" style='${style}''></div>`)
-                row.append(e)
-                row.append(text)
-                const inputBuffer = $(`<div class='inputbuffer'></div>`)
-                const inputWrapper = $(`<div class='inputwrapper'></div>`)
-                inputBuffer.append(inputWrapper)
-                row.append(inputBuffer)
-                text.click(() => {
-                    startInput(inputWrapper, start, end)
-                    focused = end;
-                })
-                elem.append(row)
-                if (focused == null) startInput(inputWrapper, start, end)
+                elements.push(row)
+                elemsByIndex.set(i, inputWrapper)
+                if (focusedEntry?.id == end?.id) {
+                    const inputBox = startInput(inputWrapper, i)
+                    toStart.push(() => inputBox.focus())
+                }
             }
         }
+        if (elem != null) elem.append(...elements)
+        for (const f of toStart) f()
     }
     render()
 }
 
 function emptyProfile(): Profile {
-    return {colors: new Map()}
+    return {colors: new Map(), expanded: new Set()}
 }
 
 export async function loadChart() {
     const credentials = await getCredentials()
     const entries = await loadEntries(credentials)
-    renderChart(entries, loadProfile())
+    renderChartFromEntries(entries, loadProfile())
 }
 
-function renderChart(entries:Entry[], profile:Profile){
-    const timings:Map<string, number> = getTotalTime(entries, entries[0].time, entries[entries.length - 1].time)
+function renderChartFromEntries(entries:Entry[], profile:Profile){
+    const timings:Map<string, number> = getTimeByLabel(entries, entries[0].time, entries[entries.length - 1].time)
     const datapoints:{y: number, label: string, color:string}[] = []
     for (const [k, v] of timings) {
-        datapoints.push({label: k, y: v / 3600, color: renderColor(getColor(k, profile))})
+        datapoints.push({label: k, y: v / 3600000, color: renderColor(getColor(k, profile))})
     }
     /* tslint:disable-next-line */
+    var chart = new CanvasJS.Chart("chartContainer", {
+        animationEnabled: false,
+        title: {},
+        data: [{
+            type: "pie",
+            startAngle: 240,
+            yValueFormatString: "##0.0h",
+            indexLabel: "{label} {y}",
+            dataPoints: datapoints
+        }]
+    });
+    chart.render();
+}
+
+function renderChart(report:Report, profile:Profile){
+    let total = totalReportTime(report);
+    const datapoints:{y: number, label: string, color:string}[] = []
+    for (const [label, [t, r]] of Object.entries(report)) {
+        const labelPrefix = label.split('/')[0]
+        datapoints.push({label: labelPrefix, y: t / 3600000, color: renderColor(getColor(labelPrefix, profile))})
+    }
     var chart = new CanvasJS.Chart("chartContainer", {
         animationEnabled: false,
         title: {},
@@ -533,78 +649,6 @@ function renderBars(entries:Entry[], buckets:Bucket[], profile:Profile) {
         },
         data: data
     })
-   /*
-   var chart = new CanvasJS.Chart("chartContainer", {
-	animationEnabled: true,
-    title: {},
-	axisX: {
-		interval: 1,
-	},
-	axisY:{
-		valueFormatString:"#0h",
-	},
-	data: [{
-		type: "stackedColumn",
-		showInLegend: true,
-		color: "#696661",
-		name: "Q1",
-		dataPoints: [
-			{ y: 6.75, x: 0},
-			{ y: 8.57, x: 1 },
-			{ y: 10.64, x: 2 },
-			{ y: 13.97, x: 3 },
-			{ y: 15.42, x: 4 },
-			{ y: 17.26, x: 5 },
-			{ y: 20.26, x: 6 }
-		]
-		},
-		{        
-			type: "stackedColumn",
-			showInLegend: true,
-			name: "Q2",
-			color: "#EDCA93",
-			dataPoints: [
-				{ y: 6.82, x: 0},
-				{ y: 9.02, x: 1 },
-				{ y: 11.80, x: 2 },
-				{ y: 14.11, x: 3 },
-				{ y: 15.96, x: 4 },
-				{ y: 17.73, x: 5 },
-				{ y: 21.5, x: 6 }
-			]
-		},
-		{        
-			type: "stackedColumn",
-			showInLegend: true,
-			name: "Q3",
-			color: "#695A42",
-			dataPoints: [
-				{ y: 7.28, x: 0 },
-				{ y: 9.72, x: 1 },
-				{ y: 13.30, x: 2 },
-				{ y: 14.9, x: 3 },
-				{ y: 18.10, x: 4 },
-				{ y: 18.68, x: 5 },
-				{ y: 22.45, x: 6 }
-			]
-		},
-		{        
-			type: "stackedColumn",
-			showInLegend: true,
-			name: "Q4",
-			color: "#B6B1A8",
-			dataPoints: [
-				{ y: 8.44, x: 0 },
-				{ y: 10.58, x: 1 },
-				{ y: 14.41, x: 2 },
-				{ y: 16.86, x: 3 },
-				{ y: 10.64, x: 4 },
-				{ y: 21.32, x: 5 },
-				{ y: 26.06, x: 6 }
-			]
-	}]
-    });
-    */
     chart.render()
 }
 
@@ -631,14 +675,14 @@ function incrementMap<T>(map:Map<T, number>, x:T, dy:number): void {
     map.set(x, (y||0)+dy)
 }
 
-function getTotalTime(entries:Entry[], start:Date, end:Date): Map<string, number> {
-    const result:Map<string, number> = new Map()
+function getTimeByLabel(entries:Entry[], start:Date, end:Date): Map<Label, number> {
+    const resultMap:Map<string, number> = new Map()
     const spans:Span[] = spansInRange(start, end, entries)
     for (const span of spans) {
-        const seconds = (span.start.time.getTime() - span.end.time.getTime()) / 1000
-        incrementMap(result, span.label, seconds)
+        const seconds = (span.end.time.getTime() - span.start.time.getTime()) / 1000
+        incrementMap(resultMap, span.label, seconds)
     }
-    return result
+    return resultMap
 }
 
 function sumByName(data:[string, number][]): Map<string, number> {
@@ -661,15 +705,22 @@ function daysAgo(n:number): Date {
     return result
 }
 
-function renderLabel(label:Label): string {
+function spanText(cls:string, text:string): HTMLSpanElement {
+    const result = document.createElement('span')
+    result.setAttribute('class', cls)
+    result.textContent = text
+    return result
+}
+
+function renderLabel(label:Label): (Node|string)[] {
     if (label.length > 0 && label[0] == '?') {
-        return `<span class='errorlabel'>${label}</span>`
+        return [spanText('errorlabel', label)]
     }
     const parts = label.split('/')
-    if (parts.length == 1) return label
+    if (parts.length == 1) return [label]
     const prefix = parts.slice(0, parts.length-1).join('/')
     const suffix = parts[parts.length-1]
-    return `${suffix} <span class='categorylabel'>(${prefix})</span>` 
+    return [`${suffix} `, spanText('categorylabel', `(${prefix})`)] 
 }
 
 function* namesFrom(label:Label|undefined): Generator<Label> {
@@ -680,17 +731,22 @@ function* namesFrom(label:Label|undefined): Generator<Label> {
     }
 }
 
+//returns labels starting from the most recent
+//TODO: can make faster
 function getDistinctLabels(entries:EntryList): Label[] {
-    const s:Set<string> = new Set()
-    for (const entry of entries.entries) {
-        for (const name of namesFrom(entry.before)) {
-            s.add(name)
-        }
-        for (const name of namesFrom(entry.after)) {
-            s.add(name)
+    const seen:Set<string> = new Set()
+    const result:string[] = []
+    function add(s:string) {
+        if (!seen.has(s)) {
+            result.push(s)
+            seen.add(s)
         }
     }
-    return Array.from(s.keys())
+    for (const entry of revit(entries.entries)) {
+        for (const name of namesFrom(entry.before)) add(name)
+        for (const name of namesFrom(entry.after)) add(name)
+    }
+    return result
 }
 
 function uniques<T>(xs:T[]): T[] {
@@ -710,10 +766,17 @@ interface MyDate {
     minute: number
 }
 
+const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+function renderMonth(d:Date): string {
+    return months[d.getMonth()]
+}
+
 function convertDate(d:Date): MyDate {
     return {
         year: d.getFullYear(),
-        month: d.toLocaleString('default', {month: 'short'}),
+        //month: d.toLocaleString('default', {month: 'short'}),
+        month: renderMonth(d),
         day: d.getDate(),
         hour: (d.getHours() + 11) % 12 + 1,
         ampm: d.getHours() < 12 ? 'am' : 'pm',
@@ -737,14 +800,16 @@ function renderTime(date:Date): string {
     function renderAMPM(d:MyDate) {
         return `${renderTime(d)} ${(d.ampm == 'am') ? 'AM' : 'PM'}`
     }
-    function renderDay(d:MyDate) {
-        return `${renderAMPM(d)}, ${d.month} ${d.day}`
+    function renderDay(d:MyDate, prefix:string) {
+        return `${prefix || (renderAMPM(d) + ',')} ${d.month} ${d.day}`
     }
-    function renderYear(d:MyDate) {
-        return `${renderDay(d)}, ${d.year}`
+    function renderYear(d:MyDate, prefix:string) {
+        return `${renderDay(d, prefix)}, ${d.year}`
     }
-    if (now.year != myDate.year) return renderYear(myDate)
-    else if (now.month != myDate.month || now.day != myDate.day) return renderDay(myDate)
+    //const isMidnight = (myDate.ampm == 'am' && myDate.hour == 12 && myDate.minute == 0)
+    const prefix = renderAMPM(myDate) + ','
+    if (now.year != myDate.year) return renderYear(myDate, prefix)
+    else if (now.month != myDate.month || now.day != myDate.day) return renderDay(myDate, prefix)
     else if (now.ampm != myDate.ampm || myDate.hour == 12) return renderAMPM(myDate)
     else return renderTime(myDate)
 }
@@ -757,6 +822,27 @@ function saveEntries(changedEntries:Entry[]) {
         localStorage.setItem(`${entryPrefix}${entry.id}`, serializeEntry(entry))
     }
 }
+
+function timeToDateSpecString(date:Date): string {
+    const now = convertDate(new Date())
+    const myDate = convertDate(date)
+    function renderTime(d:MyDate) {
+        return `${d.hour}:${twoDigits(d.minute)}`
+    }
+    function renderAMPM(d:MyDate) {
+        return `${renderTime(d)} ${(d.ampm == 'am') ? 'AM' : 'PM'}`
+    }
+    function renderDay(d:MyDate, prefix:string) {
+        return `${prefix || (renderAMPM(d) + ',')} ${d.month} ${d.day}`
+    }
+    function renderYear(d:MyDate, prefix:string) {
+        return `${renderDay(d, prefix)}, ${d.year}`
+    }
+    const isMidnight = (myDate.ampm == 'am' && myDate.hour == 12 && myDate.minute == 0)
+    const prefix = isMidnight ? 'start' : `${renderAMPM(myDate)},`
+    return renderYear(myDate, prefix)
+}
+
 
 export function getLocalEntries(): Entry[] {
     const result:Entry[] = []
@@ -781,9 +867,6 @@ async function loadEntries(credentials:Credentials): Promise<Entry[]> {
     const localEntries = getLocalEntries()
     const remoteEntries = await getRemoteEntries(credentials)
     const merge = mergeAndUpdate(localEntries, remoteEntries)
-    console.log(localEntries)
-    console.log(remoteEntries)
-    console.log(merge)
     sendUpdates(merge.yUpdates, credentials)
     saveEntries(merge.xUpdates)
     return merge.merged
@@ -928,13 +1011,13 @@ function hideLabelPopup(): void {
 }
 
 function saveProfile(profile:Profile): void {
-    localStorage.setItem('profile', serializeProfile(profile))
+    localStorage.setItem('profile', newSerializeProfile(profile))
 }
 
 function loadProfile(): Profile {
     const s:string|null = localStorage.getItem('profile')
     if (s == '' || s == null) return emptyProfile()
-    return deserializeProfile(s)
+    return newDeserializeProfile(s)
 }
 
 export async function loadLabels() {
@@ -959,7 +1042,7 @@ function showLabels(entries:EntryList, credentials:Credentials) {
         result.append(l)
         l.click(function(e) {
             e.stopPropagation()
-            labelPopup(label, callback)
+            labelPopup(label, callback, entries)
         })
         const picker = $(`<input type='color' id='${label}-color' class='colorpicker' value='${colorHex}'></input>`)
         result.append(picker)
@@ -994,6 +1077,7 @@ function sortAndFilter(entries:Entry[]): Entry[] {
     return result
 }
 
+//TODO less sort and filter...
 function showCalendar(
     entries:EntryList,
     initialPopup: [uid, uid]|null,
@@ -1063,11 +1147,12 @@ function group(name: string, view:View): string|null {
     return `${start}/${group(rest, v.expand)}`
 }
 
-interface Profile {
-    colors: Map<Label, Color>
+type Profile = {
+    colors: Map<Label, Color>,
+    expanded: Set<Label>
 }
 
-function serializeProfile(profile:Profile): string {
+function oldSerializeProfile(profile:Profile): string {
     const parts = []
     for (const [label, color] of profile.colors.entries()) {
         parts.push(`${label},${colorToHex(color)}`)
@@ -1075,14 +1160,46 @@ function serializeProfile(profile:Profile): string {
     return parts.join(';')
 }
 
-function deserializeProfile(s:string): Profile {
+function newSerializeProfile(profile:Profile): string {
+    const serializable = {
+        colors: Array.from(profile.colors.entries()).map(x => [x[0], colorToHex(x[1])]),
+        expanded: Array.from(profile.expanded.keys())
+    }
+    return JSON.stringify(serializable)
+}
+
+function newDeserializeProfile(s:string): Profile {
+    try {
+        const json = JSON.parse(s)
+        const result = emptyProfile()
+        const colors = json.colors
+        if (!Array.isArray(colors)) throw Error('colors not array')
+        for (const x of colors) {
+            if (!Array.isArray(x) || x.length != 2 || typeof(x[0]) != 'string' || typeof(x[1]) != 'string') {
+                throw Error(`malformed colors array entry ${x} of length ${x.length} [${typeof(x[0])}, ${typeof(x[1])}]`)
+            }
+            result.colors.set(x[0], colorFromHex(x[1]))
+        }
+        const expanded = json.expanded
+        if (!Array.isArray(expanded)) throw Error('expanded not array')
+        for (const x of expanded) {
+            if (typeof(x) != 'string') throw Error('expanded array entry not string')
+            result.expanded.add(x)
+        }
+        return result
+    } catch(e) {
+        console.log(e)
+        return oldDeserializeProfile(s)
+    }
+}
+
+function oldDeserializeProfile(s:string): Profile {
     const result = emptyProfile()
     for (const pair of s.split(';')) {
         const parts = pair.split(',')
-        if (parts.length != 2) {
-            console.log('Bad part')
+        if (parts.length == 2) {
+            result.colors.set(parts[0], colorFromHex(parts[1]))
         }
-        result.colors.set(parts[0], colorFromHex(parts[1]))
     }
     return result
 }
@@ -1092,20 +1209,36 @@ function randInt(n:number): number {
     return Math.floor(n * Math.random())
 }
 
-export function loadColors() {
-    const e = $(`<input type='color' id='colorpicker'></input>`)
-    const button = $(`<div>Done!</div>`)
-    $('#main').append(e)
-    $('#main').append(button)
-    button.click(function() {
-        console.log(e.val())
-    })
+function HSVtoRGB(h:number, s:number, v:number): Color {
+    var r, g, b, i, f, p, q, t;
+    function round(x: number): number {
+        const result = Math.floor(x * 256)
+        return (result == 256) ? 255 : result
+    }
+    i = Math.floor(h * 6);
+    f = h * 6 - i;
+    p = v * (1 - s);
+    q = v * (1 - f * s);
+    t = v * (1 - (1 - f) * s);
+    function color(r:number, g:number, b:number): Color { return {
+        r: round(r), g: round(g), b: round(b)
+    }}
+    switch (i % 6) {
+        case 0: return color(v, t, p)
+        case 1: return color(q, v, p)
+        case 2: return color(p, v, t)
+        case 3: return color(p, q, v)
+        case 4: return color(t, p, v)
+        case 5: return color(v, p, q)
+        default: return assertNever(i%6 as never)
+    }
 }
 
 const colors = ['#fc6472', '#f4b2a6', '#eccdb3', '#bcefd0', '#a1e8e4', '#23c8b2', '#c3ecee']
 
 function randomColor() {
-    return colorFromHex(colors[randInt(colors.length)])
+    return HSVtoRGB(Math.random(), 0.5 + 0.3 * Math.random(), 1)
+    //return colorFromHex(colors[randInt(colors.length)])
     /*
     return {
         r: randInt(256),
@@ -1247,8 +1380,13 @@ type TimeUpdate = {kind: 'relabel', before?: Entry, after?: Entry, label: Label}
     | {kind: 'append', before?: Label, after?:Label, time: Date}
     //add new_entry after update.before; new_entry.after = update.before.after; new_entry.before = label; update.before.after = update.label;
     | {kind: 'spliceSplit', before: Entry, label: Label, time: Date} 
-    | {kind: 'bulkRename', from: Label, to:Label}
-
+    | {kind: 'bulkRename', from: Label, to:Label, moveChildren: boolean}
+    // Deletes update.entry
+    // If shiftForward is an entry and entry.before is not undefined, then it entry.shiftForward.before = entry.before
+    // Similarly for shiftBack and entry.after
+    // If reflectBack is an entry and entry.before is not undefined, then entry.reflectBack.after = entry.before
+    // Similarly for reflectForward and entry.after
+    | {kind: 'delete', entry: Entry, shiftForward?: Entry, reflectBack?: Entry, shiftBack?:Entry, reflectForward?:Entry}
 
 function insertAt<T>(toInsert:T, xs:T[], index:number): T[] {
     return xs.slice(0, index).concat([toInsert]).concat(xs.slice(index))
@@ -1281,6 +1419,33 @@ function upsertInPlace(entry:Entry, entries:Entry[]): void {
         }
     }
     entries.push(entry)
+}
+
+const DEFAULT_LIMIT:number = 500
+function maxEntriesToShow(): number {
+    const params = new URLSearchParams(window.location.search)
+    const limit = params.get('limit')
+    if (limit == undefined) return DEFAULT_LIMIT
+    const n = parseInt(limit)
+    if (isNaN(n)) return DEFAULT_LIMIT
+    return n
+}
+
+function bulkUpsertInPlace(upserts:Entry[], entries:Entry[]): void {
+    const byId:Map<uid, Entry> = new Map()
+    for (const upsert of upserts) {
+        byId.set(upsert.id, upsert)
+    }
+    for (let i = 0; i < entries.length; i++) {
+        const upsert = byId.get(entries[i].id)
+        if (upsert != undefined) {
+            byId.delete(upsert.id)
+            entries[i] = upsert
+        }
+    }
+    for (const upsert of byId.values()) {
+        entries.push(upsert)
+    }
 }
 
 class EntryList {
@@ -1329,6 +1494,11 @@ function applyUpdate(
         const newEntry = {...entry, lastModified:now()}
         entries.upsert(newEntry)
         upsertInPlace(newEntry, updatedEntries)
+    }
+    function bulkUpsert(upserts:Entry[]) {
+        const newEntries = upserts.map(entry => ({...entry, lastModified:now()}))
+        for (const entry of newEntries) entries.upsert(entry)
+        bulkUpsertInPlace(newEntries, updatedEntries)
     }
     switch (update.kind) {
         case 'composite':
@@ -1385,79 +1555,66 @@ function applyUpdate(
             break
         }
         case 'bulkRename':
+            //TODO: make a bulkUpsert method
+            const upserts:Entry[] = []
             for (const entry of entries.entries) {
-                if (matchesLabelRemap(entry.before, update.from)) {
-                    upsert({...entry, before: remapLabel(entry.before, update.from, update.to)})
+                let newEntry = entry
+                let changed = false;
+                if (matchesLabelRemap(newEntry.before, update.from, update.moveChildren)) {
+                    newEntry = {...newEntry, before: remapLabel(newEntry.before, update.from, update.to, update.moveChildren)}
+                    changed = true;
                     displayUpdates.push({kind: 'relabel', after: entry})
                 }
-                if (matchesLabelRemap(entry.after, update.from)) {
-                    upsert({...entry, after: remapLabel(entry.after, update.from, update.to)})
+                if (matchesLabelRemap(newEntry.after, update.from, update.moveChildren)) {
+                    newEntry = {...newEntry, after: remapLabel(newEntry.after, update.from, update.to, update.moveChildren)}
+                    changed = true;
                     displayUpdates.push({kind: 'relabel', before: entry})
                 }
-            }    
+                if (changed) upserts.push(newEntry)
+            }
+            bulkUpsert(upserts)
+            break
+        case 'delete':
+            upsert({...update.entry, deleted:true})
+            if (update.entry.before !== undefined) {
+                if (update.shiftForward !== undefined) {
+                    upsert({...update.shiftForward, before: update.entry.before})
+                }
+                if (update.reflectBack !== undefined) {
+                    upsert({...update.reflectBack, after: update.entry.before})
+                }
+            }
+            if (update.entry.after !== undefined) {
+                if (update.shiftBack !== undefined) {
+                    upsert({...update.shiftBack, after: update.entry.after})
+                }
+                if (update.reflectForward !== undefined) {
+                    upsert({...update.reflectForward, before: update.entry.after})
+                }
+            }
             break
         default: assertNever(update)
     }
 }
 
-function matchesLabelRemap(label:Label|undefined, from:Label) {
-    return (label != undefined && label.slice(0, from.length) == from)
+function matchesLabelRemap(label:Label|undefined, from:Label, moveChildren:boolean) {
+    if (moveChildren) return (label != undefined && label.slice(0, from.length) == from)
+    else return label == from
 }
 
-function remapLabel(label:Label|undefined, from:Label, to:Label): Label|undefined {
-    if (label === undefined) return undefined
-    if (label.slice(0, from.length) === from) {
-        return to + label.slice(from.length)
-    }
-    return label
-}
-/*
-function applyUpdate(
-    update:TimeUpdate,
-    entriesList:Entry[][],
-): Entry[][] {
-    switch (update.kind) {
-        case 'relabel':
-            return entriesList.map(entries => {
-                entries = applyTo(
-                    entry => ({...entry, after: update.label}),
-                    entries,
-                    update.before
-                )
-                entries = applyTo(
-                    entry => ({...entry, before: update.label}),
-                    entries,
-                    update.after
-                )
-                return entries
-            })
-        case 'split': 
-            const newEntry:Entry = {
-                time: update.time,
-                before: update.before.after || update.after.before,
-                after: update.after.before || update.before.after,
-                id: newUID()
-            }
-            return entriesList.map(entries =>
-                insertBetween(newEntry, entries, update.before, update.after)
-            )
-        case 'merge':
-            return entriesList.map(entries => {
-                const [a, b] = neighbors(update.entry, entries)
-                if (a != null) a.after = update.label
-                if (b != null) b.before = update.label
-                return remove(update.entry, entries)
-            })
-        case 'move':
-            return entriesList.map(entries => applyTo(
-                entry => ({...entry, time: update.time}),
-                entries,
-                update.entry
-            ))
-        default: assertNever(update)
+function remapLabel(label:Label|undefined, from:Label, to:Label, moveChildren:boolean): Label|undefined {
+    if (moveChildren) {
+        if (label === undefined) return undefined
+        if (label.slice(0, from.length) === from) {
+            return to + label.slice(from.length)
+        }
+        return label
+    } else {
+        if (label == from) return to
+        else return label
     }
 }
-*/
+
 
 function* listPairsAndEnds<T>(xs:Generator<T>): Generator<[T|null, T|null]> {
     let a:T|null = null;
@@ -1489,8 +1646,9 @@ function* it<T>(xs:T[]): Generator<T> {
         yield xs[i]
     }
 }
-function* revit<T>(xs:T[]): Generator<T> {
-    for (let i = xs.length-1; i>=0; i--) {
+function* revit<T>(xs:T[], limit?:number): Generator<T> {
+    const bottom = (limit == undefined) ? 0 : xs.length - limit
+    for (let i = xs.length-1; i>=bottom; i--) {
         yield xs[i]
     }
 }
@@ -1560,7 +1718,6 @@ function signupRemote(credentials:Credentials): Promise<boolean> {
 		} else {
 			$.post(`signup?${credentialParams(credentials)}`, function(data) {
 				if (data != 'ok') { 
-                    console.log(data)
 					resolve(false)
 				} else {
 					resolve(true)
@@ -1688,12 +1845,528 @@ export function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdat
 }
 
 function sendUpdates(updates:Entry[], credentials:Credentials) {
-    const s = serializeEntries(updates)
+    const s = encodeURIComponent(serializeEntries(updates))
     $.post(`update?${credentialParams(credentials)}`, `entries=${s}`)
 }
 
 async function getRemoteEntries(credentials:Credentials): Promise<Entry[]> {
     return new Promise(function(resolve, reject) {
-        $.get(`entries?${credentialParams(credentials)}`, s => resolve(deserializeEntries(s)))
+        $.get(`entries?${credentialParams(credentials)}`, s => resolve(deserializeEntries(decodeURIComponent(s))))
     }) 
+}
+
+// Records the total hours in different categories, and then 
+type Report = {
+    [label: string]: [number, Report]
+}
+
+//Splits on the first slash
+//Second part is empty if no slash
+//If first symbol is '?', whole thing is prefix
+function prefixAndRemainder(s:string): [string, string] {
+    const n = s.indexOf('/')
+    if (n < 0 || s[0] == '?') return [s, '']
+    return [s.slice(0, n), s.slice(n+1)]
+}
+
+function addToReport(label:Label, t:number, r:Report): void {
+    if (label.length == 0) return
+    const [a, b] = prefixAndRemainder(label)
+    let sub = r[a]
+    if (sub == undefined) {
+        const newSub = {}
+        addToReport(b, t, newSub)
+        r[a] = [t, newSub]
+    } else {
+        sub[0] += t
+        addToReport(b, t, sub[1])
+    }
+}
+
+function matchLabel(category:Label, label:Label): string|null {
+    const n = category.length
+    if (n == 0) return label
+    else if (label == category) return 'uncategorized'
+    else if (label.slice(0, n+1) == category + '/') return label.slice(n+1)
+    else return null
+}
+
+function makeReport(entries:Entry[], start:Date, end:Date, topLabels:Label[]): [Report, number] {
+    entries = sortAndFilter(entries)
+    const result:Report = {}
+    let total:number = 0
+    for (const [e0, e1] of listPairs(it(entries))) {
+        if (e1.time > start && e0.time < end) {
+            const t0 = last(e0.time, start)
+            const t1 = first(e1.time, end)
+            const label = labelFrom(e0, e1)
+            const dt = t1.getTime() - t0.getTime()
+            total += dt
+            for (const topLabel of topLabels) {
+                const subLabel:string|null = matchLabel(topLabel, label)
+                if (t0 != t1 && subLabel != null) addToReport(subLabel, dt, result)
+            }
+        }
+    }
+    return [result, total]
+}
+
+function reportToString(report:Report): string {
+    const parts = []
+    for (const [label, [time, sub]] of Object.entries(report)) {
+        parts.push(`${label}:${time}:${reportToString(sub)}`)
+    }
+    return `{${parts.join(',')}}`
+}
+
+function serializeReport(report:Report): string {
+    return JSON.stringify(report)
+}
+
+function purifyReport(impure:any): Report {
+    const result:Report = {}
+    for (const [a, b] of Object.entries(impure)) {
+        if (Array.isArray(b) && b.length == 2) {
+            const [x, y] = b
+            if (typeof(x) == 'number') {
+                result[a] = [x, purifyReport(y)]
+            } else {
+                console.error(`Failed to parse report because ${x} is not a number.`)
+            }
+        } else {
+            console.error(`Failed to parse report because ${b} is not an array of length 2.`)
+        }
+    }
+    return result
+}
+
+export function deserializeReport(s:string): Report {
+    const result = JSON.parse(s)
+    return purifyReport(result)
+}
+
+function len(x:Report): number {
+    return Object.keys(x).length
+}
+
+function total(x:Report): number {
+    let result:number =0
+    for (const [t, r] of Object.values(x)) {
+        result += t
+    }
+    return result
+}
+
+// Compress paths (with no branches) into single steps
+export function flattenReport(report:Report): Report {
+    const entries = Object.entries(report)
+    const result:Report = {}
+    for (const [label, [time, sub]] of entries) {
+        const flatSub = flattenReport(sub)
+        const subEntries = Object.entries(flatSub);
+        if (subEntries.length == 1 && subEntries[0][1][0] == time) {
+            result[`${label}/${subEntries[0][0]}`] = subEntries[0][1]
+        } else {
+            result[label] = [time, flatSub] 
+        }
+    }
+    return result
+}
+
+const TOTAL:string = 'total'
+// If there are multiple top level parts in the report, put a "Total" category on top
+// This seems like the wrong report semantics, but whatever
+function capReport(report:Report): Report {
+    if (len(report) == 1) return report
+    const result:Report = {}
+    result[TOTAL] = [total(report), report]
+    return result
+}
+
+function totalReportTime(report:Report): number {
+    let result:number = 0
+    for (const [label, [time, sub]] of Object.entries(report)) {
+        result += time
+    }
+    return result
+}
+
+function renderPercentage(x:number): string {
+    return `${Math.round(x * 100)}%`
+}
+
+function renderColorPicker(label:Label, profile:Profile, callback:()=>void=() => {}): HTMLInputElement {
+    const picker = document.createElement('input')
+    picker.setAttribute('type', 'color')
+    picker.setAttribute('class', 'colorpicker')
+    const colorHex = colorToHex(getColor(label, profile))
+    picker.setAttribute('value', colorHex)
+    picker.addEventListener('change', function() {
+        profile.colors.set(label, colorFromHex(picker.value))
+        saveProfile(profile)
+        callback()
+    })
+    return picker
+}
+
+function renderReportLine(
+    label:Label,
+    timeString:string,
+    onClick:() => void,
+    onShiftClick:() => void,
+    hasChildren:boolean,
+    fullLabel:Label,
+    profile:Profile,
+    editParams:EditParams|null=null
+): HTMLDivElement {
+    const childString = (hasChildren) ? ' (+)' : ''
+    const childClass = (hasChildren) ? ' clickable' : ''
+    const result = div('ReportLine')
+    const lineText = spanText(`reportLineText${hasChildren ? ' clickable' : ''}`, `[${timeString}] ${label}${childString}`)
+    lineText.addEventListener('click', function(e) {
+        if (e.shiftKey) onShiftClick()
+        else onClick()
+        e.preventDefault()
+    })
+    lineText.addEventListener('mousedown', function(e) {
+        if (e.shiftKey) e.preventDefault()
+    })
+    result.append(lineText)
+    function editCallback(t:TimeUpdate) {
+        if (editParams !== null) {
+            editParams.callback(t)
+            editParams.redraw()
+        }
+    }
+    if (editParams != null) {
+        const renameLink = spanText('renameButton clickable', '[rename]')
+        renameLink.addEventListener('click', function() {
+            labelPopup(fullLabel, editCallback, editParams.entries)
+        })
+        const picker = renderColorPicker(fullLabel, profile, editParams.redraw)
+        result.append(picker, renameLink)
+    }
+    return result
+    //return $(`<div class="reportLine"><span>${label}</span><span>${renderDuration(time)}</span><span>${renderPercentage(fraction)}</span></div>`)
+}
+
+//TODO: should have a profileChanged callback
+interface EditParams {
+    callback: (t:TimeUpdate) => void,
+    redraw: () => void,
+    entries:EntryList,
+}
+
+function makeEditParams(entries:EntryList, credentials:Credentials): EditParams {
+    function callback(update:TimeUpdate) {
+        applyAndSave(entries, update, credentials)
+    }
+    return {callback: callback, entries: entries, redraw: () => {}}
+}
+
+function addRedraw(editParams:EditParams, redraw: () => void): EditParams {
+    return {...editParams, redraw: function() {editParams.redraw(); redraw()}}
+}
+
+function joinPrefix(prefix:string, label:string) {
+    if (prefix == TOTAL || prefix.length == 0) return label
+    return `${prefix}/${label}`
+}
+
+type TimeDisplayOption = 'weekly' | 'total' | 'daily' | 'percent'
+
+const second_ms = 1000
+const minute_ms = 60 * second_ms
+const hour_ms = 60 * minute_ms
+const day_ms = 24 * hour_ms
+const week_ms = 7 * day_ms
+
+function displayReportTime(
+    time:number,
+    total:number,
+    display:TimeDisplayOption,
+    totalInReport:number,
+) {
+    switch (display) {
+        case 'total': return renderDuration(time)
+        case 'daily': return `${renderDuration(time * (day_ms) / total)}/d`
+        case 'weekly': return `${renderDuration(time * week_ms / total)}/w`
+        case 'percent': return renderPercentage(time/totalInReport)
+    }
+}
+
+function renderReport(
+    report:Report,
+    timeDisplay:TimeDisplayOption,
+    total:number, // this is the total including items not in the report
+    profile:Profile,
+    editParams:EditParams|null = null,
+    indentation:number=0,
+    reportTotal:number = totalReportTime(report),
+    expanded:boolean=true,
+    prefix:string = '',
+): [HTMLDivElement, (expand:boolean) => void] {
+    const result = div('indent')
+    const childExpanders:Array<(expand:boolean) => void> = []
+    function renderLineAndChildren(label:Label, time:number, sub:Report): [HTMLDivElement[], (expand:boolean) => void] {
+        const hasChildren = Object.keys(sub).length > 0
+        const result:HTMLDivElement[] = []
+        const fullLabel = joinPrefix(prefix, label)
+        let toggleVisibility = () => {}
+        let setAllChildrenVisibility = (expand:boolean) => {}
+        let toggleAllChildren = () => {}
+        let visible:boolean = expanded || profile.expanded.has(fullLabel)
+        function setVisibility(newVisibility:boolean, child:HTMLDivElement) {
+            visible = newVisibility
+            child.hidden = !visible
+            if (visible) profile.expanded.add(fullLabel)
+            else profile.expanded.delete(fullLabel)
+        }
+        if (hasChildren) {
+            const [child, expander] = renderReport(sub, timeDisplay, total, profile, editParams, indentation+1, reportTotal, false, fullLabel)
+            child.hidden = !visible
+            toggleVisibility = () => setVisibility(!visible, child)
+            setAllChildrenVisibility = function(newVisibility:boolean) {
+                setVisibility(newVisibility, child)
+                expander(newVisibility)
+            }
+            toggleAllChildren = () => setAllChildrenVisibility(!visible)
+            result.push(child)
+        }
+        const head = renderReportLine(
+            label,
+            displayReportTime(time, total, timeDisplay, reportTotal),
+            toggleVisibility, toggleAllChildren,
+            hasChildren, fullLabel, profile, editParams
+        )
+        result.unshift(head)
+        return [result, setAllChildrenVisibility]
+    }
+    const entries = Object.entries(report)
+    entries.sort((x, y) => y[1][0] - x[1][0])
+    for (const [label, [time, sub]] of entries) {
+        const [elements, expandChildren] = renderLineAndChildren(label, time, sub)
+        for (const e of elements) { result.append(e) }
+        childExpanders.push(expandChildren)
+    }
+    return [result, (expand:boolean) => { for (const f of childExpanders) f(expand) }]
+}
+
+interface ReportParams {
+    start?: string,
+    end?: string,
+    label?: Label,
+    edit?: boolean,
+    timeDisplay?: TimeDisplayOption,
+}
+
+function renderParams(params:ReportParams): string {
+    const parts:string[] = []
+    if (params.start !== undefined) parts.push(`start=${params.start}`)
+    if (params.end !== undefined) parts.push(`end=${params.end}`)
+    if (params.label !== undefined) parts.push(`label=${params.label}`)
+    if (params.edit !== undefined) parts.push(`edit=${params.edit ? 'true' : 'false'}`)
+    if (params.timeDisplay !== undefined) parts.push(`display=${params.timeDisplay}`)
+    return parts.join('&')
+}
+
+function reportFromParams(entries:Entry[], params: ReportParams): [Report, number]|null {
+    const startParse = parseString(dateRule, params.start || 'start today')
+    const endParse = parseString(dateRule, params.end || 'end today')
+    const labels = (params.label == undefined) ? [''] : params.label.split(',').map(x => x.trim())
+    const edit = (params.edit === undefined) ? false : params.edit
+    if (startParse == 'fail' || startParse == 'prefix') return null
+    if (endParse == 'fail' || endParse == 'prefix') return null
+    const startDate = specToDate(startParse[0], now(), 'closest')
+    const endDate = specToDate(endParse[0], now(), 'closest')
+    window.history.pushState(null, "", `report.html?${renderParams(params)}`)
+    $('#startDate').val(params.start || '');
+    $('#endDate').val(params.end || '');
+    $('#topLabel').val(params.label || '');
+    (document.getElementById('editableReport') as HTMLInputElement).checked = params.edit || false
+    if (params.timeDisplay != undefined) setRadio('timeDisplay', params.timeDisplay)
+    const [report, total] = makeReport(entries, startDate, endDate, labels)
+    const flattenedReport = edit ? report : flattenReport(report)
+    return [flattenedReport, total]
+}
+
+function shiftInterval(start:string, end:string, direction:-1|1): [string, string] {
+    const startSpec = parseString(dateRule, start)
+    if (startSpec == 'fail' || startSpec == 'prefix' || startSpec[2].length > 0) return [start, end]
+    const endSpec = parseString(dateRule, end)
+    if (endSpec == 'fail' || endSpec == 'prefix' || endSpec[2].length > 0) return [start, end]
+    const startDate = specToDate(startSpec[0], now(), 'closest')
+    const endDate = specToDate(endSpec[0], now(), 'closest')
+    const interval = (endDate.getTime() - startDate.getTime())
+    function shiftAndRender(d:Date): string {
+        return timeToDateSpecString(new Date(d.getTime() + direction * interval))
+    }
+    return [shiftAndRender(startDate), shiftAndRender(endDate)]
+}
+
+function coerceTimeDisplay(s:string|null): TimeDisplayOption|undefined {
+    if (s == 'weekly' || s == 'daily' || s == 'total' || s == 'percent') return s
+    return undefined
+}
+
+function readRadio(name:string): string|null {
+    const nodes = document.getElementsByName(name)
+    for (const node of nodes) {
+        const n = (node as HTMLInputElement)
+        if (n.checked) return n.value 
+    }
+    return null
+}
+
+function setRadio(name:string, value:string): void {
+    const nodes = document.getElementsByName(name)
+    for (const node of nodes) {
+        const radio = (node as HTMLInputElement);
+        radio.checked = (radio.value == value)
+    }
+}
+
+export async function loadReport() {
+    const credentials = await getCredentials()
+    const entries = new EntryList(await loadEntries(credentials))
+    const profile = loadProfile()
+    const editParams = makeEditParams(entries, credentials)
+    function paramsFromInput(): ReportParams {
+        return {
+            start: $('#startDate').val() as string|undefined,
+            end: $('#endDate').val() as string|undefined,
+            label: $('#topLabel').val() as string|undefined,
+            edit: (document.getElementById('editableReport') as HTMLInputElement).checked,
+            timeDisplay: coerceTimeDisplay(readRadio('timeDisplay'))
+        }
+    }
+    function paramsFromURL(url:string): ReportParams {
+        const params = new URLSearchParams(url.split('?')[1])
+        const result = {
+            start: params.get('start') || undefined,
+            end: params.get('end') || undefined,
+            label: params.get('label') || undefined,
+            edit: (params.get('edit') === 'true'),
+            timeDisplay: coerceTimeDisplay(params.get('display'))
+        }
+        return result
+    }
+
+    function kd(e:any) {
+        if (e.keyCode == 13) {
+            e.preventDefault()
+            render(paramsFromInput())
+        }
+    }
+    $('.reportParamInput').keydown(kd)
+
+    function shiftReport(direction:-1|1): void {
+        const params = paramsFromInput()
+        const start = params.start || 'start today'
+        const end = params.end || 'end today'
+        const [newStart, newEnd] = shiftInterval(start, end, direction)
+        const newParams = {...params, start: newStart, end: newEnd}
+        render(newParams)
+    }
+
+    $('#pageleft').click(() => shiftReport(-1))
+    $('#pageright').click(() => shiftReport(1))
+
+    function display(report:Report, total:number, params: ReportParams) {
+        const newEditParams = (params.edit) ? addRedraw(editParams, () => render(params)) : null
+        displayReport(report, total, params.timeDisplay || 'total', newEditParams, profile)
+    }
+
+    function render(params: ReportParams) {
+        const reportAndTotal = reportFromParams(entries.entries, params)
+        if (reportAndTotal != null) {
+            display(reportAndTotal[0], reportAndTotal[1], params)
+        }
+    }
+
+    window.addEventListener('popstate', function (event) {
+        render(paramsFromURL(window.location.href))
+    });
+    $('#generate').click(() => render(paramsFromInput()))
+    document.getElementById('editableReport')?.addEventListener('click', () => render(paramsFromInput()))
+    document.getElementsByName('timeDisplay').forEach(e => e.addEventListener('change', () => render(paramsFromInput())))
+    $('#export').click(function() {
+        const params = paramsFromInput()
+        const reportAndTotal = reportFromParams(entries.entries, params)
+        if (reportAndTotal != null) {
+            const report = reportAndTotal[0]
+            const total = reportAndTotal[1]
+            display(report, total, params)
+            exportReport(report)
+        }
+    })
+    $('#startDate').val('start today')
+    $('#endDate').val('now')
+    render(paramsFromURL(window.location.href))
+}
+
+function baseURL(): string {
+    const url = window.location;
+    return url.protocol + '//' + url.host
+}
+
+function exportReport(report:Report) {
+    $('#exportPopup').attr('active', 'true')
+    $('#exportPopup').html(
+        `<label for="link">Link:</label>` +
+        `<textarea id="link"></textarea>` +
+        `<div>` +
+        `<span class="option" choosable id="copyLink">Copy (⏎)</span>` +
+        `<span class="option" choosable id="cancel">Cancel (esc)</span>` +
+        `</div>`
+    )
+    const id:string = randomLinkID()
+    //TOOD: include base URL
+    $('#link').val(`${baseURL()}/r/${id}`)
+    $('#link').select()
+    const serialized = serializeReport(report)
+    $.get(`export?id=${id}&serialized=${encodeURIComponent(serialized)}`).done(function(x:string) {
+        if (x != 'ok') {
+            alert(x)
+        }
+    })
+    function exit() {
+        $('#link').blur()
+        $('#exportPopup').attr('active', 'false')
+    }
+    function submit() {
+        $('#link').select()
+        document.execCommand('copy')
+        exit()
+    }
+    $('#cancel').click(exit)
+    $('#copyLink').click(submit)
+    $('#link').keydown((e:any) => {
+        if (e.keyCode == 27) {
+            exit()
+            e.preventDefault()
+        } else if (e.keyCode == 13) {
+            submit()
+            e.preventDefault()
+        }
+    })
+}
+
+// Used in viewReport.ejs as well as from loadReport()
+export function displayReport(
+    report:Report,
+    total:number,
+    timeDisplay:TimeDisplayOption,
+    editParams:EditParams|null=null,
+    profile:Profile=emptyProfile()
+) {
+    $('#reportContainer').empty()
+    $('#reportContainer').append(renderReport(capReport(report), timeDisplay, total, profile, editParams)[0])
+    //This is pretty ugly, let's just not do it...
+    //renderChart(report, profile)
+}
+
+
+function randomLinkID(): string {
+    return Math.random().toString(36).substring(2, 8)
 }

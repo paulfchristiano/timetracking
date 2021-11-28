@@ -6,7 +6,12 @@ const PORT = process.env.PORT || 5000
 import {Entry, serializeEntries, deserializeEntries} from './public/entries.js'
 
 import postgres from 'postgres'
-const sql = (process.env.DATABASE_URL == undefined) ? null : postgres(process.env.DATABASE_URL)
+const db_url = process.env.DATABASE_URL
+const runningLocally = (db_url == undefined || db_url.search('localhost') > 0)
+const sql = postgres(
+    db_url,
+    runningLocally ? {} : {ssl: {rejectUnauthorized: false}}
+)
 
 export type Credentials = {username: string, hashedPassword: string}
 
@@ -64,6 +69,8 @@ const app = express()
 app.use(bodyParser.urlencoded({extended: false}))
 
 app
+    .set('view engine', 'ejs')
+    .set('views', './views')
     .get('/test', async (req: any, res: any) => {
         res.send('Hello, world!')
     })
@@ -104,6 +111,7 @@ app
     }
     })
     .post('/update', async (req: any, res:any) => {
+        console.log('updating!')
         const credentials:Credentials = {
             username:req.query.username,
             hashedPassword:req.query.hashedPassword
@@ -111,10 +119,11 @@ app
         try {
             const success:boolean = await userExists(credentials)
             if (success) {
-                const entries = deserializeEntries(req.body.entries)
+                const entries = deserializeEntries(decodeURIComponent(req.body.entries))
                 for (const entry of entries) {
                     updateEntry(credentials, entry)
                 }
+                res.send('ok')
             } else {
                 res.send('username+password not found')
             }
@@ -131,15 +140,33 @@ app
             const success:boolean = await userExists(credentials)
             if (success) {
                 const entries = await getEntries(credentials)
-                console.log(entries)
                 const s = serializeEntries(entries)
-                console.log(s)
-                res.send(s) 
+                res.send(encodeURIComponent(s))
             } else {
                 res.send('username+password not found')
             }
         } catch (e) {
             res.send(e)
         }
+    })
+    .get('/export', async (req: any, res:any) => {
+        const id = req.query.id;
+        try{
+          const results = await sql`
+            INSERT INTO reports (id, serialized)
+            VALUES (${id}, ${decodeURIComponent(req.query.serialized)})
+          `
+          res.send('ok')
+        } catch(err) {
+          res.send(err)
+        }
+    })
+    .get('/r/:id', async (req:any, res:any) => {
+        const result = await sql`
+            SELECT serialized FROM reports
+            WHERE id = ${req.params.id}
+        `
+        if (result.length < 1) res.send('Report not found')
+        res.render('viewReport', {report: encodeURIComponent(result[0].serialized)}) 
     })
     .listen(PORT, () => console.log(`Listening on ${ PORT }`))

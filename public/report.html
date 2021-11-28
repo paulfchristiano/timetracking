@@ -1,0 +1,42 @@
+<html>
+<head>
+    <link rel="modulepreload" href="./track.js">
+    <script type="text/javascript" src="jquery.js"></script>
+    <script type="text/javascript" src="canvasjs.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="style.css"/>
+    <link rel="stylesheet" type="text/css" href="suggester.css"/>
+    <script type="module">
+        import {loadReport} from '/track.js'
+        loadReport()
+    </script>
+    <title>Timetrack</title>
+</head>
+
+<body>
+
+    <div id='renamePopup' class='popup' tabindex="1">
+        <div>Label: <span id='popuplabel'></span></div>
+        <div id='newlabel'></div>
+        <div><label for='movechildren'>Move children: </label> <input type='checkbox' id='movechildren'> </div>
+        <div><span class="option" choosable id="doneButton">Done (esc)</span></div>
+    </div>
+    <div id='exportPopup' class='popup'>
+    </div>
+
+    <div> <label for='startDate'>Start:</label> <input class='reportParamInput' id='startDate'></input> <div class='pager' id='pageleft'>&laquo;</div><div class='pager' id='pageright'> &raquo;</div> </div>
+    <div> <label for='endDate'>End:</label> <input class='reportParamInput' id='endDate'></input> </div>
+    <div> <label for='topLabel'>Labels: </label><input class='reportParamInput' id='topLabel'></input> </div>
+    <div style='margin-bottom:1em;'> <label for='editableReport'>Edit: </label><input type='checkbox' id='editableReport'></input> </div>
+    <div style='margin-bottom:1em;'> Show:
+        <input type='radio' name='timeDisplay' value='total' checked> Total
+        <input type='radio' name='timeDisplay' value='weekly'> Weekly
+        <input type='radio' name='timeDisplay' value='daily'> Daily
+        <input type='radio' name='timeDisplay' value='percent'> Percent
+    </div>
+
+    <div> <span class="option" choosable id="generate">Generate</span> <span class="option" choosable id="export">Export</span> </div>
+    <div id='reportContainer'></div>    
+      
+
+</body>
+</html>

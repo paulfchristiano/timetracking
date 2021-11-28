@@ -54,7 +54,9 @@ import bodyParser from 'body-parser';
 var PORT = process.env.PORT || 5000;
 import { serializeEntries, deserializeEntries } from './public/entries.js';
 import postgres from 'postgres';
-var sql = (process.env.DATABASE_URL == undefined) ? null : postgres(process.env.DATABASE_URL);
+var db_url = process.env.DATABASE_URL;
+var runningLocally = (db_url == undefined || db_url.search('localhost') > 0);
+var sql = postgres(db_url, runningLocally ? {} : { ssl: { rejectUnauthorized: false } });
 function signup(credentials) {
     return __awaiter(this, void 0, void 0, function () {
         return __generator(this, function (_a) {
@@ -115,6 +117,8 @@ function getEntries(credentials) {
 var app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app
+    .set('view engine', 'ejs')
+    .set('views', './views')
     .get('/test', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
     return __generator(this, function (_a) {
         res.send('Hello, world!');
@@ -190,6 +194,7 @@ app
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
+                console.log('updating!');
                 credentials = {
                     username: req.query.username,
                     hashedPassword: req.query.hashedPassword
@@ -201,7 +206,7 @@ app
             case 2:
                 success = _b.sent();
                 if (success) {
-                    entries = deserializeEntries(req.body.entries);
+                    entries = deserializeEntries(decodeURIComponent(req.body.entries));
                     try {
                         for (entries_1 = __values(entries), entries_1_1 = entries_1.next(); !entries_1_1.done; entries_1_1 = entries_1.next()) {
                             entry = entries_1_1.value;
@@ -215,6 +220,7 @@ app
                         }
                         finally { if (e_4) throw e_4.error; }
                     }
+                    res.send('ok');
                 }
                 else {
                     res.send('username+password not found');
@@ -247,10 +253,8 @@ app
                 return [4 /*yield*/, getEntries(credentials)];
             case 3:
                 entries = _a.sent();
-                console.log(entries);
                 s = serializeEntries(entries);
-                console.log(s);
-                res.send(s);
+                res.send(encodeURIComponent(s));
                 return [3 /*break*/, 5];
             case 4:
                 res.send('username+password not found');
@@ -264,6 +268,42 @@ app
         }
     });
 }); })
+    .get('/export', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
+    var id, results, err_1;
+    return __generator(this, function (_a) {
+        switch (_a.label) {
+            case 0:
+                id = req.query.id;
+                _a.label = 1;
+            case 1:
+                _a.trys.push([1, 3, , 4]);
+                return [4 /*yield*/, sql(templateObject_5 || (templateObject_5 = __makeTemplateObject(["\n            INSERT INTO reports (id, serialized)\n            VALUES (", ", ", ")\n          "], ["\n            INSERT INTO reports (id, serialized)\n            VALUES (", ", ", ")\n          "])), id, decodeURIComponent(req.query.serialized))];
+            case 2:
+                results = _a.sent();
+                res.send('ok');
+                return [3 /*break*/, 4];
+            case 3:
+                err_1 = _a.sent();
+                res.send(err_1);
+                return [3 /*break*/, 4];
+            case 4: return [2 /*return*/];
+        }
+    });
+}); })
+    .get('/r/:id', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
+    var result;
+    return __generator(this, function (_a) {
+        switch (_a.label) {
+            case 0: return [4 /*yield*/, sql(templateObject_6 || (templateObject_6 = __makeTemplateObject(["\n            SELECT serialized FROM reports\n            WHERE id = ", "\n        "], ["\n            SELECT serialized FROM reports\n            WHERE id = ", "\n        "])), req.params.id)];
+            case 1:
+                result = _a.sent();
+                if (result.length < 1)
+                    res.send('Report not found');
+                res.render('viewReport', { report: encodeURIComponent(result[0].serialized) });
+                return [2 /*return*/];
+        }
+    });
+}); })
     .listen(PORT, function () { return console.log("Listening on " + PORT); });
-var templateObject_1, templateObject_2, templateObject_3, templateObject_4;
+var templateObject_1, templateObject_2, templateObject_3, templateObject_4, templateObject_5, templateObject_6;
 //# sourceMappingURL=index.js.map

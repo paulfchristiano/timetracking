@@ -8,6 +8,7 @@
     top: 100%;
     left: 0;
     right: 0;
+    font-size: 1em;
 } 
 
 .suggestion {
@@ -24,4 +25,5 @@
 
 .inputwrapper {
     position: relative;
+    display: inline-block;
 }
