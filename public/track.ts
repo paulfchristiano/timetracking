@@ -265,8 +265,8 @@ export async function loadTracker(): Promise<void> {
     const entries = new EntryList(rawEntries)
     let focused:Entry|null = null;
     function callback(update:TimeUpdate) {
-        applyAndSave(entries, update, credentials)
-        render()
+        const displayUpdates = applyAndSave(entries, update, credentials)
+        renderUpdates(displayUpdates)
     }
     function startInput(elem:JQE, start:Entry, end:Entry|null): void {
         $('.inputwrapper').empty()
@@ -342,6 +342,21 @@ export async function loadTracker(): Promise<void> {
             setTimer(start, elem)
         }
     }, 1000)
+    function renderUpdates(updates:DisplayUpdate[]) {
+        for (const update of updates) renderUpdate(update)
+    }
+    function renderUpdate(update:DisplayUpdate) {
+        switch (update.kind) {
+            case 'insert':
+                const [before, after] = neighbors(entries, update.entry)
+                
+                return
+            case 'delete':
+                return
+            case 'relabel':
+                return
+        }
+    }
     function render() {
         heartbeats = []
         const elem = $('#inputs')
