@@ -31,6 +31,32 @@ export function serializeEntries(entries:Entry[]): string {
     })))
 }
 
+export function serializeEntry(x:Entry): string {
+    return JSON.stringify({
+        time: x.time.getTime(),
+        before: x.before,
+        after: x.after,
+        lastModified: x.lastModified.getTime(),
+        deleted: x.deleted,
+        id: x.id,
+    })
+}
+
+export function deserializeEntry(s:string): Entry|null {
+    const x = JSON.parse(s)
+    const time:Date|undefined = (typeof x.time == 'number') ? new Date(x.time) : undefined
+    if (time === undefined) return null
+    const lastModified:Date = (typeof x.lastModified == 'number')
+        ? new Date(x.lastModified)
+        : now()
+    const before:string|undefined = (typeof x.before == 'string') ? x.before : undefined
+    const after:string|undefined = (typeof x.after == 'string') ? x.after : undefined
+    const deleted:boolean = (typeof x.deleted == 'boolean') ? x.deleted : false
+    const id:string = (typeof x.id == 'string') ? x.id : newUID()
+    return {time:time, lastModified:lastModified, before:before, after:after, deleted:deleted, id:id}
+}
+
+/* DEPRECATED */
 export function deserializeEntries(s:string): Entry[] {
     const result:Entry[] = []
     try {

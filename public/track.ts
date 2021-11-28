@@ -2,7 +2,7 @@ import e from 'express'
 import { Callbacks, data, readyException } from 'jquery'
 import { InputBox } from './suggester.js'
 import { DateSpec, Action, dateRule, parseString } from './parse.js'
-import { Entry, Label, serializeEntries, deserializeEntries, uid, newUID, makeNewEntry } from './entries.js'
+import { Entry, Label, serializeEntry, serializeEntries, deserializeEntry, deserializeEntries, uid, newUID, makeNewEntry } from './entries.js'
 
 
 function* enumfrom<T>(xs:T[], i:number, j:number): Generator<[number, T]> {
@@ -37,7 +37,9 @@ function labelPopup(label:Label, callback:(update:TimeUpdate) => void): void {
     $('#movechildren').prop('checked', true)
 }
 
-function findEntry(id:uid, entries:Entry[]): [Entry, number]|null {
+//TODO make this less dumb
+function findEntry(id:uid, entryList:EntryList): [Entry, number]|null {
+    const entries = entryList.entries
     for (let i = 0; i < entries.length; i++) {
         if (entries[i].id == id) {
             return [entries[i], i]
@@ -50,17 +52,18 @@ function findEntry(id:uid, entries:Entry[]): [Entry, number]|null {
 //Then at this stage I want to get the indices from the startentry and endEntry?
 //Might actually be indices by the time it gets here, computing them at the same time that I do filtering and sorting
 function zoomedPopup(
-    entries:Entry[], //Sorted and filtered
+    entryList:EntryList,
     startEntry:uid,
     endEntry:uid,
     profile:Profile,
     popup: (start:uid, end:uid) => void,
     callback:(t:TimeUpdate) => void
 ): void {
-    let result = findEntry(startEntry, entries)
+    const entries = entryList.entries
+    let result = findEntry(startEntry, entryList)
     if (result == null) return
     const [start, startIndex] = result
-    result = findEntry(endEntry, entries)
+    result = findEntry(endEntry, entryList)
     if (result == null) return
     const [end, endIndex] = result
     $('#popup').attr('active', 'true')
@@ -95,7 +98,7 @@ function zoomedPopup(
             $('#minical').append(elem)
         }
     }
-    const input = new InputBox(getDistinctLabels(entries), $('.inputwrapper'))
+    const input = new InputBox(getDistinctLabels(entryList), $('.inputwrapper'))
     input.bind((a, s) => {
         switch (a.kind) {
             case 'raw':
@@ -238,22 +241,28 @@ function parseTime(s:string, anchor:Date, rel:'next'|'previous'|'closest'): Date
     return specToDate(m[0], anchor, rel)
 }
 
-function applyAndSave(entries:Entry[], update:TimeUpdate, credentials:Credentials) {
+function applyAndSave(
+    entries:EntryList,
+    update:TimeUpdate,
+    credentials:Credentials,
+): DisplayUpdate[] {
     const updates:Entry[] = [];
-    applyUpdate(update, entries, updates)
-    saveEntries(entries)
+    const displayUpdates:DisplayUpdate[] = [];
+    applyUpdate(update, entries, updates, displayUpdates)
+    saveEntries(updates)
     sendUpdates(updates, credentials)
+    return displayUpdates
 }
 
 export async function loadTracker(): Promise<void> {
     const credentials:Credentials = await getCredentials()
     const profile:Profile = loadProfile()
-    let entries:Entry[] = await loadEntries(credentials)
-    if (entries.length == 0) {
-        entries.push(makeNewEntry(now(), undefined, undefined))
-        saveEntries(entries)
+    let rawEntries:Entry[] = await loadEntries(credentials)
+    if (rawEntries.length == 0) {
+        rawEntries.push(makeNewEntry(now(), undefined, undefined))
+        saveEntries(rawEntries)
     }
-    sortEntries(entries)
+    const entries = new EntryList(rawEntries)
     let focused:Entry|null = null;
     function callback(update:TimeUpdate) {
         applyAndSave(entries, update, credentials)
@@ -337,8 +346,7 @@ export async function loadTracker(): Promise<void> {
         heartbeats = []
         const elem = $('#inputs')
         elem.html('')
-        const sortedEntries = sortAndFilter(entries)
-        for (const [end, start] of listPairsAndEnds(revit(sortedEntries))) {
+        for (const [end, start] of listPairsAndEnds(revit(entries.entries))) {
             //end = entries[i]
             if (end == null) {
                 const row = $(`<div class='trackertimerow'></div>`)
@@ -657,9 +665,9 @@ function* namesFrom(label:Label|undefined): Generator<Label> {
     }
 }
 
-function getDistinctLabels(entries:Entry[]): Label[] {
+function getDistinctLabels(entries:EntryList): Label[] {
     const s:Set<string> = new Set()
-    for (const entry of entries) {
+    for (const entry of entries.entries) {
         for (const name of namesFrom(entry.before)) {
             s.add(name)
         }
@@ -726,13 +734,32 @@ function renderTime(date:Date): string {
     else return renderTime(myDate)
 }
 
-function saveEntries(entries:Entry[]) {
-    localStorage.setItem('entries', serializeEntries(entries))
+const entryPrefix = 'entry/'
+const entryPrefixLength = entryPrefix.length
+
+function saveEntries(changedEntries:Entry[]) {
+    for (const entry of changedEntries) {
+        localStorage.setItem(`${entryPrefix}${entry.id}`, serializeEntry(entry))
+    }
 }
 
 export function getLocalEntries(): Entry[] {
-    const s:string|null = localStorage.getItem('entries')
-    return (s == null) ? [] : deserializeEntries(s)
+    const result:Entry[] = []
+    for (const [key, value] of Object.entries(localStorage)) {
+        if (key.substr(0, entryPrefixLength) == entryPrefix) {
+            const entry:Entry|null = deserializeEntry(value)
+            if (entry != null) result.push(entry)
+        }
+    }
+    if (result.length == 0) {
+        const s = localStorage.getItem('entries')
+        if (s != null) {
+            const entries = deserializeEntries(s)
+            saveEntries(entries)
+            window.alert("Migrated local storage to new format. Refresh the page.")
+        }
+    }
+    return result
 }
 
 async function loadEntries(credentials:Credentials): Promise<Entry[]> {   
@@ -743,7 +770,7 @@ async function loadEntries(credentials:Credentials): Promise<Entry[]> {
     console.log(remoteEntries)
     console.log(merge)
     sendUpdates(merge.yUpdates, credentials)
-    if (merge.xUpdates.length > 0) saveEntries(merge.merged)
+    saveEntries(merge.xUpdates)
     return merge.merged
 }
 
@@ -898,11 +925,11 @@ function loadProfile(): Profile {
 export async function loadLabels() {
     const credentials = await getCredentials()
     const entries = await loadEntries(credentials)
-    showLabels(entries, credentials)
+    showLabels(new EntryList(entries), credentials)
     $('#labels').click(hideLabelPopup)
 }
 
-function showLabels(entries:Entry[], credentials:Credentials) {
+function showLabels(entries:EntryList, credentials:Credentials) {
     const labels:Label[] = getDistinctLabels(entries)
     const profile = loadProfile()
     labels.sort()
@@ -939,8 +966,7 @@ export async function loadCalendar() {
         hideCalPopup()
     })
     const credentials = await getCredentials()
-    let entries = await loadEntries(credentials)
-    sortEntries(entries)
+    let entries = new EntryList(await loadEntries(credentials))
     function callback(update:TimeUpdate) {
         applyAndSave(entries, update, credentials)
     }
@@ -954,7 +980,7 @@ function sortAndFilter(entries:Entry[]): Entry[] {
 }
 
 function showCalendar(
-    entries:Entry[],
+    entries:EntryList,
     initialPopup: [uid, uid]|null,
     profile:Profile,
     callback: (t:TimeUpdate) => void,
@@ -970,13 +996,13 @@ function showCalendar(
     function popupCallback(bounds:[uid,uid]|null) {
         function f(t:TimeUpdate) {
             callback(t)
-            showCalendar(sortAndFilter(entries), bounds, profile, callback)
+            showCalendar(entries, bounds, profile, callback)
         }
         return f
     }
     function popup(startEntry:uid, endEntry:uid) {
         zoomedPopup(
-            sortAndFilter(entries), startEntry, endEntry,
+            entries, startEntry, endEntry,
             profile,
             popup,
             popupCallback([startEntry, endEntry])
@@ -985,7 +1011,7 @@ function showCalendar(
     for (const day of days) {
         getCalendarColumn(day.index).empty()
     }
-    for (const [start, end] of listPairs(it(sortAndFilter(entries)))) {
+    for (const [start, end] of listPairs(it(entries.entries))) {
         for (const day of days) {
             const range = partInDay(start.time, end.time, day)
             if (range !== null) {
@@ -1213,10 +1239,11 @@ function insertAt<T>(toInsert:T, xs:T[], index:number): T[] {
     return xs.slice(0, index).concat([toInsert]).concat(xs.slice(index))
 }
 
-function neighbors(entries:Entry[], entry:Entry): [Entry|null, Entry|null] {
+//TODO: could be better
+function neighbors(entries:EntryList, entry:Entry): [Entry|null, Entry|null] {
     let before:Entry|null = null
     let after:Entry|null = null
-    for (const x of entries) {
+    for (const x of entries.entries) {
         if (x.time < entry.time) {
             if (before == null || before.time < x.time) {
                 before = x
@@ -1241,27 +1268,63 @@ function upsertInPlace(entry:Entry, entries:Entry[]): void {
     entries.push(entry)
 }
 
+class EntryList {
+    public entries:Entry[]
+    public byID:Map<uid, Entry> = new Map()
+    constructor (entries:Entry[]) {
+        this.entries = sortAndFilter(entries)
+        for (const entry of this.entries) {
+            this.byID.set(entry.id, entry)
+        }
+    }
+    delete(entry:Entry) {
+        this.byID.delete(entry.id)
+        this.entries = this.entries.filter(x => x.id != entry.id)   
+    }
+    insert (entry:Entry) {
+        const t = entry.time.getTime()
+        let index = 0
+        while (index <= this.entries.length && this.entries[index].time.getTime() <= t) {
+            index += 1
+        }
+        insertAt(entry, this.entries, index)
+        this.byID.set(entry.id, entry)
+    }
+    upsert (entry:Entry) {
+        this.delete(entry)
+        this.insert(entry)
+    }
+}
+
+type DisplayUpdate = {kind: 'insert', entry: Entry}
+    | {kind: 'delete', entry: Entry}
+    | {kind: 'relabel', before?: Entry, after?: Entry}
+//    | {kind: 'adjustTime', entry: Entry} // TODO: simpler format for updates that don't change the order
+
 //Mutates entries in place
 //Also updates in place
+//Also inserts displayupdates into the list so that we can update tracker display
 function applyUpdate(
     update:TimeUpdate,
-    entries:Entry[],
-    updates:Entry[],
+    entries:EntryList,
+    updatedEntries:Entry[],
+    displayUpdates:DisplayUpdate[],
 ) {
     function upsert(entry:Entry) {
         const newEntry = {...entry, lastModified:now()}
-        upsertInPlace(newEntry, entries)
-        upsertInPlace(newEntry, updates)
+        entries.upsert(newEntry)
+        upsertInPlace(newEntry, updatedEntries)
     }
     switch (update.kind) {
         case 'composite':
             for (const u of update.updates) {
-                applyUpdate(u, entries, updates)
+                applyUpdate(u, entries, updatedEntries, displayUpdates)
             }
             break
         case 'relabel':
             if (update.before !== undefined) upsert({...update.before, after: update.label})
             if (update.after !== undefined) upsert({...update.after, before: update.label})
+            displayUpdates.push({kind: 'relabel', before: update.before, after: update.after})
             break
         case 'split': 
             const newEntry:Entry = makeNewEntry(
@@ -1275,35 +1338,46 @@ function applyUpdate(
             } if (update.labelAfter !== undefined) {
                 upsert({...update.after, before: update.labelAfter})
             }
+            displayUpdates.push({kind: 'insert', entry:newEntry})
             break
         case 'merge': {
             const [a, b] = neighbors(entries, update.entry)
             if (a != null) upsert({...a, after: update.label})
             if (b != null) upsert({...b, before: update.label})
+            displayUpdates.push({kind: 'delete', entry: update.entry})
             upsert({...update.entry, deleted: true})
             break
         }
         case 'move':
+            //TODO: could make this adjustTime
+            const [a, b] = neighbors(entries, update.entry)
             upsert({...update.entry, time: update.time})
+            displayUpdates.push({kind: 'delete', entry: update.entry})
+            displayUpdates.push({kind: 'insert', entry: update.entry})
             break
         case 'append': {
             const newEntry:Entry = makeNewEntry(update.time, update.before, update.after)
             upsert(newEntry)
+            displayUpdates.push({kind: 'insert', entry: newEntry})
             break
         }
         case 'spliceSplit': {
             const newEntry:Entry = makeNewEntry(update.time, update.label, update.before.after)
             upsert(newEntry)
             upsert({...update.before, after: update.label})
+            displayUpdates.push({kind: 'insert', entry: newEntry})
+            displayUpdates.push({kind: 'relabel', before: update.before})
             break
         }
         case 'bulkRename':
-            for (const entry of entries) {
+            for (const entry of entries.entries) {
                 if (matchesLabelRemap(entry.before, update.from)) {
                     upsert({...entry, before: remapLabel(entry.before, update.from, update.to)})
+                    displayUpdates.push({kind: 'relabel', after: entry})
                 }
                 if (matchesLabelRemap(entry.after, update.from)) {
                     upsert({...entry, after: remapLabel(entry.after, update.from, update.to)})
+                    displayUpdates.push({kind: 'relabel', before: entry})
                 }
             }    
             break
