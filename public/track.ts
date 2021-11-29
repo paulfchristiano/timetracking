@@ -323,21 +323,22 @@ export async function loadTracker(): Promise<void> {
         saveEntries(rawEntries)
     }
     const entries = new EntryList(rawEntries)
-    let focused:number|null = null;
+    let focusedIndex:number|null = null;
     let focusedEntry:Entry|null = null;
     const entriesToShow = maxEntriesToShow()
     function callback(update:TimeUpdate) {
         const displayUpdates = applyAndSave(entries, update, credentials)
         renderUpdates(displayUpdates)
+        focusedIndex = null
     }
-    //TODO: these index manipulations are going to go badly when things are added and removed and so on
+    
     function startInput(elem:HTMLDivElement, startIndex:number): InputBox<Action> {
         $('.inputwrapper').empty()
-        focused = startIndex
+        focusedIndex = startIndex
         const x = new InputBox(actionRule, {kind: 'raw'}, getDistinctLabels(entries), $(elem))
         const start:Entry = entries.entries[startIndex]
         const end:Entry|null = (startIndex < entries.entries.length - 1) ? entries.entries[startIndex+1] : null
-        focusedEntry = end
+        focusedEntry = start
         if (end == null) {
             x.bind((a, s) => {
                 switch (a.kind) {
@@ -436,104 +437,166 @@ export async function loadTracker(): Promise<void> {
     function renderUpdates(updates:DisplayUpdate[]) {
         for (const update of updates) renderUpdate(update)
     }
+    const topElement = document.getElementById('inputs') as HTMLDivElement
+    const rangeDivAfterID:Map<uid|undefined, HTMLDivElement> = new Map()
+    const bulletDivByID:Map<uid, HTMLDivElement> = new Map()
+    const inputWrapperAfterID:Map<uid|undefined, HTMLDivElement> = new Map()
+    //TODO: make sure we update these entries with appropriate properties
     function renderUpdate(update:DisplayUpdate) {
         switch (update.kind) {
-            case 'insert':
+            case 'insert': {
                 const [before, after] = neighbors(entries, update.entry)
-                
+                if (before != undefined) {
+                    const range:HTMLDivElement|null = rangeDivAfterID.get(before.id) || null
+                    const firstRange = makeRange(update.entry, after)
+                    const bullet = makeBullet(update.entry)
+                    const secondRange = makeRange(update.entry, after)
+                    rangeDivAfterID.set(before.id, firstRange)
+                    rangeDivAfterID.set(update.entry.id, secondRange)
+                    bulletDivByID.set(update.entry.id, bullet)
+                    topElement.insertBefore(firstRange, range)
+                    topElement.insertBefore(bullet, range)
+                    topElement.insertBefore(secondRange, range)
+                    if (range != null) topElement.removeChild(range)
+                }
                 return
-            case 'delete':
+            }
+            case 'delete': {
+                const [before, after] = neighbors(entries, update.entry)
+                const firstRange = rangeDivAfterID.get(before?.id) || null
+                const secondRange = rangeDivAfterID.get(update.entry.id) || null
+                const bullet = bulletDivByID.get(update.entry.id) || null
+                if (before != null)  {
+                    const range = makeRange(before, after)
+                    topElement.insertBefore(range, firstRange)
+                }
+                if (firstRange != null) topElement.removeChild(firstRange)
+                if (secondRange != null) topElement.removeChild(secondRange)
+                if (bullet != null) topElement.removeChild(bullet)
                 return
+            }
             case 'relabel':
+                let before = update.before
+                let after = update.after
+                if (before == undefined && after !== undefined) before = neighbors(entries, after)[0] || undefined
+                if (after == undefined && before !== undefined) after = neighbors(entries, before)[1] || undefined
+                if (before !== undefined) {
+                    const oldRange = rangeDivAfterID.get(before.id)
+                    const newRange = makeRange(before, after || null)
+                    if (oldRange != null) {
+                        topElement.insertBefore(newRange, oldRange)
+                        topElement.removeChild(oldRange)
+                    }
+                } 
                 return
+        }
+    }
+    function indexOfEntry(entry:Entry): number {
+        for (let i = 0; i < entries.entries.length; i++) {
+            if (entries.entries[i].id == entry.id) return i
+        }
+        return entries.entries.length - 1
+    }
+    function makeRange(start:Entry, end:Entry|null): HTMLDivElement {
+        const label = (end == null) ? start.after || 'TBD' : labelFrom(start, end)
+        const color:string = (end == null) ? 'gray' : renderColor(getColor(label, profile))
+        const result = div('trackerrow')
+        const text = div('trackerlabel')
+        const labelDiv = div('labeldiv')
+        labelDiv.append(...renderLabel(label))
+        const durationDiv = div('durationdiv')
+        if (end == null) {
+            setTimer(start.time, durationDiv)
+            heartbeats.push([start.time, durationDiv])
+        } else {
+            durationDiv.textContent = renderDuration(end.time.getTime() - start.time.getTime()) 
+        }
+        text.append(labelDiv, durationDiv)
+        const line = div('line')
+        line.style.backgroundColor = color
+        line.style.float = 'left'
+        result.append(line, text)
+        const inputBuffer = div('inputbuffer')
+        const inputWrapper = div('inputwrapper')
+        inputBuffer.appendChild(inputWrapper)
+        result.append(inputBuffer)
+        text.addEventListener('click', () => {
+            startInput(inputWrapper, indexOfEntry(start)).focus()
+        })
+        inputWrapperAfterID.set(start.id, inputWrapper)
+        rangeDivAfterID.set(start.id, result)
+        return result
+    }
+    function makeBullet(end:Entry|null): HTMLDivElement {
+        if (end == null) {
+            const result = div('trackertimerow')
+            result.appendChild(div('nowdot'))
+            result.appendChild(div('timelabel'))
+            return result
+        } else {
+            const result = div('trackertimerow')
+            result.appendChild(div('dot'))
+            const time = div('timelabel')
+            time.textContent = renderTime(end.time)
+            time.setAttribute('contenteditable', 'true')
+            time.addEventListener('blur', function() {
+                time.textContent = renderTime(end.time)
+            })
+            time.addEventListener('keydown', function(e) {
+                if (e.keyCode == 13) {
+                    e.preventDefault()
+                    const date = parseTime(time.textContent || '', end.time, 'closest')
+                    if (date != 'error') {
+                        callback({kind: 'move', entry: end, time: date})
+                    }
+                }
+            })
+            result.appendChild(time)
+            return result
         }
     }
     function render() {
         heartbeats = []
         const toStart:Array<() => void> = [];
-        const elem = document.getElementById('inputs')
         const elements:HTMLDivElement[] = []
-        const elemsByIndex:Map<number, HTMLDivElement> = new Map()
-        if (elem != null) elem.innerHTML = ''
+        if (topElement != null) topElement.innerHTML = ''
         $('#inputs').unbind('keydown')
         $('#inputs').bind('keydown', function(e) {
             function focusOnIndex(newIndex:number) {
-                const elem = elemsByIndex.get(newIndex)
-                if (elem != null) {
+                const elem = inputWrapperAfterID.get(entries.entries[newIndex].id)
+                if (elem != undefined) {
                     const inputBox = startInput(elem, newIndex)
                     inputBox.focus()
                 }
             }
-            if (e.keyCode == 38 && focused !== null) {
-                focusOnIndex(focused+1)
-            } else if (e.keyCode == 40 && focused !== null) {
-                focusOnIndex(focused-1)
+            if (focusedIndex == null) {
+                if (focusedEntry == null) {
+                    focusOnIndex(entries.entries.length-1)
+                } else { 
+                    for (const [i, entry] of enumerate(it(entries.entries))) {
+                        if (entry.id == focusedEntry.id) {
+                            focusedIndex = i
+                        }
+                    }
+                }
+            }
+            if (e.keyCode == 38 && focusedIndex !== null) {
+                focusOnIndex(focusedIndex+1)
+            } else if (e.keyCode == 40 && focusedIndex !== null) {
+                focusOnIndex(focusedIndex-1)
             }
         })
         for (let i = entries.entries.length-1; i >= 0 && i >= entries.entries.length - entriesToShow; i--) {
             const end:Entry|null = (i == entries.entries.length - 1) ? null : entries.entries[i+1]
             const start:Entry|null = entries.entries[i]
-            if (end == null) {
-                const row = div('trackertimerow')
-                row.appendChild(div('nowdot'))
-                row.appendChild(div('timelabel'))
-                elements.push(row)
-            } else {
-                const row = div('trackertimerow')
-                row.appendChild(div('dot'))
-                const time = div('timelabel')
-                time.textContent = renderTime(end.time)
-                time.setAttribute('contenteditable', 'true')
-                time.addEventListener('blur', function() {
-                    time.textContent = renderTime(end.time)
-                })
-                time.addEventListener('keydown', function(e) {
-                    if (e.keyCode == 13) {
-                        e.preventDefault()
-                        const date = parseTime(time.textContent || '', end.time, 'closest')
-                        if (date != 'error') {
-                            callback({kind: 'move', entry: end, time: date})
-                        }
-                    }
-                })
-                row.appendChild(time)
-                elements.push(row)
-            }
+            const row = makeBullet(end)
+            elements.push(row)
             if (start != null) {
-                const label = (end == null) ? start.after || 'TBD' : labelFrom(start, end)
-                const color:string = (end == null) ? 'gray' : renderColor(getColor(label, profile))
-                const row = div('trackerrow')
-                const text = div('trackerlabel')
-                const labelDiv = div('labeldiv')
-                labelDiv.append(...renderLabel(label))
-                const durationDiv = div('durationdiv')
-                if (end == null) {
-                    setTimer(start.time, durationDiv)
-                    heartbeats.push([start.time, durationDiv])
-                } else {
-                    durationDiv.textContent = renderDuration(end.time.getTime() - start.time.getTime()) 
-                }
-                text.append(labelDiv, durationDiv)
-                const line = div('line')
-                line.style.backgroundColor = color
-                line.style.float = 'left'
-                row.append(line, text)
-                const inputBuffer = div('inputbuffer')
-                const inputWrapper = div('inputwrapper')
-                inputBuffer.appendChild(inputWrapper)
-                row.append(inputBuffer)
-                text.addEventListener('click', () => {
-                    startInput(inputWrapper, i).focus()
-                })
+                const row = makeRange(start, end)
                 elements.push(row)
-                elemsByIndex.set(i, inputWrapper)
-                if (focusedEntry?.id == end?.id) {
-                    const inputBox = startInput(inputWrapper, i)
-                    toStart.push(() => inputBox.focus())
-                }
             }
         }
-        if (elem != null) elem.append(...elements)
+        if (topElement != null) topElement.append(...elements)
         for (const f of toStart) f()
     }
     render()
