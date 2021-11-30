@@ -299,13 +299,12 @@ function applyAndSave(
     entries:EntryList,
     update:TimeUpdate,
     credentials:Credentials,
-): DisplayUpdate[] {
+    displayCallback: (du:DisplayUpdate) => void = () => {}
+) {
     const updates:Entry[] = [];
-    const displayUpdates:DisplayUpdate[] = [];
-    applyUpdate(update, entries, updates, displayUpdates)
+    applyUpdate(update, entries, updates, displayCallback)
     saveEntries(updates)
     sendUpdates(updates, credentials)
-    return displayUpdates
 }
 
 function div(cls:string): HTMLDivElement {
@@ -327,12 +326,13 @@ export async function loadTracker(): Promise<void> {
     let focusedEntry:Entry|null = null;
     const entriesToShow = maxEntriesToShow()
     function callback(update:TimeUpdate) {
-        const displayUpdates = applyAndSave(entries, update, credentials)
-        renderUpdates(displayUpdates)
+        const displayUpdates = applyAndSave(entries, update, credentials, renderUpdate)
         focusedIndex = null
     }
     
-    function startInput(elem:HTMLDivElement, startIndex:number): InputBox<Action> {
+    function startInput(startIndex:number): InputBox<Action> {
+        //TODO handle gracefully
+        const elem = inputWrapperAfterID.get(entries.entries[startIndex].id) as HTMLDivElement
         $('.inputwrapper').empty()
         focusedIndex = startIndex
         const x = new InputBox(actionRule, {kind: 'raw'}, getDistinctLabels(entries), $(elem))
@@ -434,35 +434,30 @@ export async function loadTracker(): Promise<void> {
             setTimer(start, elem)
         }
     }, 1000)
-    function renderUpdates(updates:DisplayUpdate[]) {
-        for (const update of updates) renderUpdate(update)
-    }
     const topElement = document.getElementById('inputs') as HTMLDivElement
     const rangeDivAfterID:Map<uid|undefined, HTMLDivElement> = new Map()
-    const bulletDivByID:Map<uid, HTMLDivElement> = new Map()
+    const bulletDivByID:Map<uid|null, HTMLDivElement> = new Map()
     const inputWrapperAfterID:Map<uid|undefined, HTMLDivElement> = new Map()
     //TODO: make sure we update these entries with appropriate properties
     function renderUpdate(update:DisplayUpdate) {
+        console.log(update)
         switch (update.kind) {
             case 'insert': {
-                const [before, after] = neighbors(entries, update.entry)
+                const [before, after] = neighbors(entries, entries.refresh(update.entry))
                 if (before != undefined) {
                     const range:HTMLDivElement|null = rangeDivAfterID.get(before.id) || null
-                    const firstRange = makeRange(update.entry, after)
+                    const firstRange = makeRange(before, update.entry)
                     const bullet = makeBullet(update.entry)
                     const secondRange = makeRange(update.entry, after)
-                    rangeDivAfterID.set(before.id, firstRange)
-                    rangeDivAfterID.set(update.entry.id, secondRange)
-                    bulletDivByID.set(update.entry.id, bullet)
-                    topElement.insertBefore(firstRange, range)
-                    topElement.insertBefore(bullet, range)
                     topElement.insertBefore(secondRange, range)
+                    topElement.insertBefore(bullet, range)
+                    topElement.insertBefore(firstRange, range)
                     if (range != null) topElement.removeChild(range)
                 }
-                return
+                break
             }
             case 'delete': {
-                const [before, after] = neighbors(entries, update.entry)
+                const [before, after] = neighbors(entries, entries.refresh(update.entry))
                 const firstRange = rangeDivAfterID.get(before?.id) || null
                 const secondRange = rangeDivAfterID.get(update.entry.id) || null
                 const bullet = bulletDivByID.get(update.entry.id) || null
@@ -473,7 +468,7 @@ export async function loadTracker(): Promise<void> {
                 if (firstRange != null) topElement.removeChild(firstRange)
                 if (secondRange != null) topElement.removeChild(secondRange)
                 if (bullet != null) topElement.removeChild(bullet)
-                return
+                break
             }
             case 'relabel':
                 let before = update.before
@@ -488,8 +483,9 @@ export async function loadTracker(): Promise<void> {
                         topElement.removeChild(oldRange)
                     }
                 } 
-                return
+                break
         }
+        if (focusedEntry != null) startInput(indexOfEntry(focusedEntry)).focus()
     }
     function indexOfEntry(entry:Entry): number {
         for (let i = 0; i < entries.entries.length; i++) {
@@ -498,6 +494,8 @@ export async function loadTracker(): Promise<void> {
         return entries.entries.length - 1
     }
     function makeRange(start:Entry, end:Entry|null): HTMLDivElement {
+        start = entries.refresh(start)
+        end = (end === null) ? null : entries.refresh(end)
         const label = (end == null) ? start.after || 'TBD' : labelFrom(start, end)
         const color:string = (end == null) ? 'gray' : renderColor(getColor(label, profile))
         const result = div('trackerrow')
@@ -520,15 +518,16 @@ export async function loadTracker(): Promise<void> {
         const inputWrapper = div('inputwrapper')
         inputBuffer.appendChild(inputWrapper)
         result.append(inputBuffer)
-        text.addEventListener('click', () => {
-            startInput(inputWrapper, indexOfEntry(start)).focus()
-        })
         inputWrapperAfterID.set(start.id, inputWrapper)
         rangeDivAfterID.set(start.id, result)
+        text.addEventListener('click', () => {
+            startInput(indexOfEntry(start)).focus()
+        })
         return result
     }
     function makeBullet(end:Entry|null): HTMLDivElement {
-        if (end == null) {
+        const freshEnd = (end === null) ? null : entries.refresh(end)
+        if (freshEnd === null) {
             const result = div('trackertimerow')
             result.appendChild(div('nowdot'))
             result.appendChild(div('timelabel'))
@@ -537,37 +536,34 @@ export async function loadTracker(): Promise<void> {
             const result = div('trackertimerow')
             result.appendChild(div('dot'))
             const time = div('timelabel')
-            time.textContent = renderTime(end.time)
+            time.textContent = renderTime(freshEnd.time)
             time.setAttribute('contenteditable', 'true')
             time.addEventListener('blur', function() {
-                time.textContent = renderTime(end.time)
+                time.textContent = renderTime(freshEnd.time)
             })
             time.addEventListener('keydown', function(e) {
                 if (e.keyCode == 13) {
                     e.preventDefault()
-                    const date = parseTime(time.textContent || '', end.time, 'closest')
+                    const date = parseTime(time.textContent || '', freshEnd.time, 'closest')
                     if (date != 'error') {
-                        callback({kind: 'move', entry: end, time: date})
+                        callback({kind: 'move', entry: freshEnd, time: date})
                     }
                 }
             })
             result.appendChild(time)
+            bulletDivByID.set(end == null ? null : end.id, result)
             return result
         }
     }
     function render() {
         heartbeats = []
-        const toStart:Array<() => void> = [];
         const elements:HTMLDivElement[] = []
         if (topElement != null) topElement.innerHTML = ''
         $('#inputs').unbind('keydown')
         $('#inputs').bind('keydown', function(e) {
             function focusOnIndex(newIndex:number) {
-                const elem = inputWrapperAfterID.get(entries.entries[newIndex].id)
-                if (elem != undefined) {
-                    const inputBox = startInput(elem, newIndex)
-                    inputBox.focus()
-                }
+                const inputBox = startInput(newIndex)
+                inputBox.focus()
             }
             if (focusedIndex == null) {
                 if (focusedEntry == null) {
@@ -597,7 +593,7 @@ export async function loadTracker(): Promise<void> {
             }
         }
         if (topElement != null) topElement.append(...elements)
-        for (const f of toStart) f()
+        startInput(entries.entries.length-1).focus()
     }
     render()
 }
@@ -1527,15 +1523,18 @@ class EntryList {
     insert (entry:Entry) {
         const t = entry.time.getTime()
         let index = 0
-        while (index <= this.entries.length && this.entries[index].time.getTime() <= t) {
+        while (index < this.entries.length && this.entries[index].time.getTime() <= t) {
             index += 1
         }
-        insertAt(entry, this.entries, index)
+        this.entries = insertAt(entry, this.entries, index)
         this.byID.set(entry.id, entry)
     }
     upsert (entry:Entry) {
         this.delete(entry)
-        this.insert(entry)
+        if (!entry.deleted) this.insert(entry)
+    }
+    refresh (entry:Entry): Entry {
+        return this.byID.get(entry.id) || entry
     }
 }
 
@@ -1544,6 +1543,9 @@ type DisplayUpdate = {kind: 'insert', entry: Entry}
     | {kind: 'relabel', before?: Entry, after?: Entry}
 //    | {kind: 'adjustTime', entry: Entry} // TODO: simpler format for updates that don't change the order
 
+// TODO: upsert is terrible and this just fails if you pass in a stale entry :(
+// updates should just say the ID they want to update, not give the whole entry, terrible...
+
 //Mutates entries in place
 //Also updates in place
 //Also inserts displayupdates into the list so that we can update tracker display
@@ -1551,7 +1553,7 @@ function applyUpdate(
     update:TimeUpdate,
     entries:EntryList,
     updatedEntries:Entry[],
-    displayUpdates:DisplayUpdate[],
+    displayCallback:(du:DisplayUpdate) => void = () => {}
 ) {
     function upsert(entry:Entry) {
         const newEntry = {...entry, lastModified:now()}
@@ -1563,16 +1565,19 @@ function applyUpdate(
         for (const entry of newEntries) entries.upsert(entry)
         bulkUpsertInPlace(newEntries, updatedEntries)
     }
+    function display(du:DisplayUpdate) {
+        displayCallback(du)
+    }
     switch (update.kind) {
         case 'composite':
             for (const u of update.updates) {
-                applyUpdate(u, entries, updatedEntries, displayUpdates)
+                applyUpdate(u, entries, updatedEntries, displayCallback)
             }
             break
         case 'relabel':
-            if (update.before !== undefined) upsert({...update.before, after: update.label})
-            if (update.after !== undefined) upsert({...update.after, before: update.label})
-            displayUpdates.push({kind: 'relabel', before: update.before, after: update.after})
+            if (update.before !== undefined) upsert({...entries.refresh(update.before), after: update.label})
+            if (update.after !== undefined) upsert({...entries.refresh(update.after), before: update.label})
+            display({kind: 'relabel', before: update.before, after: update.after})
             break
         case 'split': 
             const newEntry:Entry = makeNewEntry(
@@ -1580,46 +1585,53 @@ function applyUpdate(
                 update.labelBefore || update.before.after || update.after.before,
                 update.labelAfter || update.after.before || update.before.after,
             )
+            console.log(entries.entries.length)
             upsert(newEntry)
+            console.log(entries.entries.length)
+            display({kind: 'insert', entry:newEntry})
             if (update.labelBefore !== undefined) {
-                upsert({...update.before, after: update.labelBefore})
+                console.log(entries.entries.length)
+                upsert({...entries.refresh(update.before), after: update.labelBefore})
+                console.log(entries.entries.length)
+                display({kind: 'relabel', before: update.before})
             } if (update.labelAfter !== undefined) {
-                upsert({...update.after, before: update.labelAfter})
+                upsert({...entries.refresh(update.after), before: update.labelAfter})
+                display({kind: 'relabel', after: update.after})
             }
-            displayUpdates.push({kind: 'insert', entry:newEntry})
             break
         case 'merge': {
             const [a, b] = neighbors(entries, update.entry)
             if (a != null) upsert({...a, after: update.label})
             if (b != null) upsert({...b, before: update.label})
-            displayUpdates.push({kind: 'delete', entry: update.entry})
-            upsert({...update.entry, deleted: true})
+            upsert({...entries.refresh(update.entry), deleted: true})
+            display({kind: 'delete', entry: update.entry})
             break
         }
         case 'move':
             //TODO: could make this adjustTime
             const [a, b] = neighbors(entries, update.entry)
-            upsert({...update.entry, time: update.time})
-            displayUpdates.push({kind: 'delete', entry: update.entry})
-            displayUpdates.push({kind: 'insert', entry: update.entry})
+            upsert({...entries.refresh(update.entry), time: update.time})
+            display({kind: 'delete', entry: update.entry})
+            display({kind: 'insert', entry: update.entry})
             break
         case 'append': {
             const newEntry:Entry = makeNewEntry(update.time, update.before, update.after)
             upsert(newEntry)
-            displayUpdates.push({kind: 'insert', entry: newEntry})
+            display({kind: 'insert', entry: newEntry})
             break
         }
         case 'spliceSplit': {
             const newEntry:Entry = makeNewEntry(update.time, update.label, update.before.after)
             upsert(newEntry)
-            upsert({...update.before, after: update.label})
-            displayUpdates.push({kind: 'insert', entry: newEntry})
-            displayUpdates.push({kind: 'relabel', before: update.before})
+            display({kind: 'insert', entry: newEntry})
+            upsert({...entries.refresh(update.before), after: update.label})
+            display({kind: 'relabel', before: update.before})
             break
         }
         case 'bulkRename':
             //TODO: make a bulkUpsert method
             const upserts:Entry[] = []
+            const displayUpdates:DisplayUpdate[] = []
             for (const entry of entries.entries) {
                 let newEntry = entry
                 let changed = false;
@@ -1636,25 +1648,29 @@ function applyUpdate(
                 if (changed) upserts.push(newEntry)
             }
             bulkUpsert(upserts)
+            for (const du of displayUpdates) display(du)
             break
         case 'delete':
-            upsert({...update.entry, deleted:true})
+            debugger;
+            const entry = entries.refresh(update.entry)
+            upsert({...entry, deleted:true})
             if (update.entry.before !== undefined) {
                 if (update.shiftForward !== undefined) {
-                    upsert({...update.shiftForward, before: update.entry.before})
+                    upsert({...entries.refresh(update.shiftForward), before: entry.before})
                 }
                 if (update.reflectBack !== undefined) {
-                    upsert({...update.reflectBack, after: update.entry.before})
+                    upsert({...entries.refresh(update.reflectBack), after: entry.before})
                 }
             }
             if (update.entry.after !== undefined) {
                 if (update.shiftBack !== undefined) {
-                    upsert({...update.shiftBack, after: update.entry.after})
+                    upsert({...entries.refresh(update.shiftBack), after: entry.after})
                 }
                 if (update.reflectForward !== undefined) {
-                    upsert({...update.reflectForward, before: update.entry.after})
+                    upsert({...entries.refresh(update.reflectForward), before: entry.after})
                 }
             }
+            display({kind: 'delete', entry: entry})
             break
         default: assertNever(update)
     }

@@ -78,7 +78,7 @@ var __spread = (this && this.__spread) || function () {
 };
 import { InputBox } from './suggester.js';
 import { dateRule, parseString, actionRule, emptyRule } from './parse.js';
-import { serializeEntries, deserializeEntries, newUID, makeNewEntry } from './entries.js';
+import { serializeEntry, serializeEntries, deserializeEntry, deserializeEntries, newUID, makeNewEntry } from './entries.js';
 function enumfrom(xs, i, j) {
     var k;
     return __generator(this, function (_a) {
@@ -136,7 +136,9 @@ function labelPopup(label, callback, entries) {
     });
     $('#movechildren').prop('checked', true);
 }
-function findEntry(id, entries) {
+//TODO make this less dumb
+function findEntry(id, entryList) {
+    var entries = entryList.entries;
     for (var i = 0; i < entries.length; i++) {
         if (entries[i].id == id) {
             return [entries[i], i];
@@ -147,14 +149,14 @@ function findEntry(id, entries) {
 //TODO: need to refactor this to do the sort + filter in the calendar construction, and to rerun when entries changes
 //Then at this stage I want to get the indices from the startentry and endEntry?
 //Might actually be indices by the time it gets here, computing them at the same time that I do filtering and sorting
-function zoomedPopup(entries, //Sorted and filtered
-startEntry, endEntry, profile, popup, callback) {
+function zoomedPopup(entryList, startEntry, endEntry, profile, popup, callback) {
     var e_1, _a;
-    var result = findEntry(startEntry, entries);
+    var entries = entryList.entries;
+    var result = findEntry(startEntry, entryList);
     if (result == null)
         return;
     var _b = __read(result, 2), start = _b[0], startIndex = _b[1];
-    result = findEntry(endEntry, entries);
+    result = findEntry(endEntry, entryList);
     if (result == null)
         return;
     var _c = __read(result, 2), end = _c[0], endIndex = _c[1];
@@ -198,7 +200,7 @@ startEntry, endEntry, profile, popup, callback) {
         }
         finally { if (e_1) throw e_1.error; }
     }
-    var input = new InputBox(actionRule, { kind: 'raw' }, getDistinctLabels(entries), $('.inputwrapper'));
+    var input = new InputBox(actionRule, { kind: 'raw' }, getDistinctLabels(entryList), $('.inputwrapper'));
     input.bind(function (a, s) {
         switch (a.kind) {
             case 'raw':
@@ -391,10 +393,11 @@ function parseTime(s, anchor, rel) {
         return 'error';
     return specToDate(m[0], anchor, rel);
 }
-function applyAndSave(entries, update, credentials) {
+function applyAndSave(entries, update, credentials, displayCallback) {
+    if (displayCallback === void 0) { displayCallback = function () { }; }
     var updates = [];
-    applyUpdate(update, entries, updates);
-    saveEntries(entries);
+    applyUpdate(update, entries, updates, displayCallback);
+    saveEntries(updates);
     sendUpdates(updates, credentials);
 }
 function div(cls) {
@@ -405,16 +408,18 @@ function div(cls) {
 export function loadTracker() {
     return __awaiter(this, void 0, void 0, function () {
         function callback(update) {
-            applyAndSave(entries, update, credentials);
-            render();
+            var displayUpdates = applyAndSave(entries, update, credentials, renderUpdate);
+            focusedIndex = null;
         }
-        function startInput(elem, startIndex, entries) {
+        function startInput(startIndex) {
+            //TODO handle gracefully
+            var elem = inputWrapperAfterID.get(entries.entries[startIndex].id);
             $('.inputwrapper').empty();
-            focused = startIndex;
+            focusedIndex = startIndex;
             var x = new InputBox(actionRule, { kind: 'raw' }, getDistinctLabels(entries), $(elem));
-            var start = entries[startIndex];
-            var end = (startIndex < entries.length - 1) ? entries[startIndex + 1] : null;
-            focusedEntry = end;
+            var start = entries.entries[startIndex];
+            var end = (startIndex < entries.entries.length - 1) ? entries.entries[startIndex + 1] : null;
+            focusedEntry = start;
             if (end == null) {
                 x.bind(function (a, s) {
                     switch (a.kind) {
@@ -450,7 +455,7 @@ export function loadTracker() {
                             callback({ kind: 'append', after: s, time: specToDate(a.time, new Date(), 'previous') });
                             break;
                         case 'continue':
-                            callback({ kind: 'delete', entry: start, reflectBack: (startIndex > 0) ? entries[startIndex - 1] : undefined });
+                            callback({ kind: 'delete', entry: start, reflectBack: (startIndex > 0) ? entries.entries[startIndex - 1] : undefined });
                             break;
                         case 'continueFirst':
                             callback({ kind: 'move', entry: start, time: minutesAfter(start.time, a.minutes) });
@@ -506,117 +511,189 @@ export function loadTracker() {
             if (diff > 1000)
                 elem.textContent = renderDuration(new Date().getTime() - start.getTime());
         }
-        function render() {
-            var e_6, _a;
-            heartbeats = [];
-            var toStart = [];
-            var elem = document.getElementById('inputs');
-            var elements = [];
-            var elemsByIndex = new Map();
-            if (elem != null)
-                elem.innerHTML = '';
-            var sortedEntries = sortAndFilter(entries);
-            $('#inputs').unbind('keydown');
-            $('#inputs').bind('keydown', function (e) {
-                function focusOnIndex(newIndex) {
-                    var elem = elemsByIndex.get(newIndex);
-                    if (elem != null) {
-                        var inputBox = startInput(elem, newIndex, sortedEntries);
-                        inputBox.focus();
+        //TODO: make sure we update these entries with appropriate properties
+        function renderUpdate(update) {
+            console.log(update);
+            switch (update.kind) {
+                case 'insert': {
+                    var _a = __read(neighbors(entries, entries.refresh(update.entry)), 2), before_1 = _a[0], after_1 = _a[1];
+                    if (before_1 != undefined) {
+                        var range = rangeDivAfterID.get(before_1.id) || null;
+                        var firstRange = makeRange(before_1, update.entry);
+                        var bullet = makeBullet(update.entry);
+                        var secondRange = makeRange(update.entry, after_1);
+                        topElement.insertBefore(secondRange, range);
+                        topElement.insertBefore(bullet, range);
+                        topElement.insertBefore(firstRange, range);
+                        if (range != null)
+                            topElement.removeChild(range);
                     }
+                    break;
                 }
-                if (e.keyCode == 38 && focused !== null) {
-                    focusOnIndex(focused + 1);
+                case 'delete': {
+                    var _b = __read(neighbors(entries, entries.refresh(update.entry)), 2), before_2 = _b[0], after_2 = _b[1];
+                    var firstRange = rangeDivAfterID.get(before_2 === null || before_2 === void 0 ? void 0 : before_2.id) || null;
+                    var secondRange = rangeDivAfterID.get(update.entry.id) || null;
+                    var bullet = bulletDivByID.get(update.entry.id) || null;
+                    if (before_2 != null) {
+                        var range = makeRange(before_2, after_2);
+                        topElement.insertBefore(range, firstRange);
+                    }
+                    if (firstRange != null)
+                        topElement.removeChild(firstRange);
+                    if (secondRange != null)
+                        topElement.removeChild(secondRange);
+                    if (bullet != null)
+                        topElement.removeChild(bullet);
+                    break;
                 }
-                else if (e.keyCode == 40 && focused !== null) {
-                    focusOnIndex(focused - 1);
-                }
-            });
-            var _loop_2 = function (i) {
-                var end = (i == sortedEntries.length - 1) ? null : sortedEntries[i + 1];
-                var start = sortedEntries[i];
-                if (end == null) {
-                    var row = div('trackertimerow');
-                    row.appendChild(div('nowdot'));
-                    row.appendChild(div('timelabel'));
-                    elements.push(row);
-                }
-                else {
-                    var row = div('trackertimerow');
-                    row.appendChild(div('dot'));
-                    var time_1 = div('timelabel');
-                    time_1.textContent = renderTime(end.time);
-                    time_1.setAttribute('contenteditable', 'true');
-                    time_1.addEventListener('blur', function () {
-                        time_1.textContent = renderTime(end.time);
-                    });
-                    time_1.addEventListener('keydown', function (e) {
-                        if (e.keyCode == 13) {
-                            e.preventDefault();
-                            var date = parseTime(time_1.textContent || '', end.time, 'closest');
-                            if (date != 'error') {
-                                callback({ kind: 'move', entry: end, time: date });
-                            }
+                case 'relabel':
+                    var before = update.before;
+                    var after = update.after;
+                    if (before == undefined && after !== undefined)
+                        before = neighbors(entries, after)[0] || undefined;
+                    if (after == undefined && before !== undefined)
+                        after = neighbors(entries, before)[1] || undefined;
+                    if (before !== undefined) {
+                        var oldRange = rangeDivAfterID.get(before.id);
+                        var newRange = makeRange(before, after || null);
+                        if (oldRange != null) {
+                            topElement.insertBefore(newRange, oldRange);
+                            topElement.removeChild(oldRange);
                         }
-                    });
-                    row.appendChild(time_1);
-                    elements.push(row);
-                }
-                if (start != null) {
-                    var label = (end == null) ? start.after || 'TBD' : labelFrom(start, end);
-                    var color = (end == null) ? 'gray' : renderColor(getColor(label, profile));
-                    var row = div('trackerrow');
-                    var text = div('trackerlabel');
-                    var labelDiv = div('labeldiv');
-                    labelDiv.append.apply(labelDiv, __spread(renderLabel(label)));
-                    var durationDiv = div('durationdiv');
-                    if (end == null) {
-                        setTimer(start.time, durationDiv);
-                        heartbeats.push([start.time, durationDiv]);
                     }
-                    else {
-                        durationDiv.textContent = renderDuration(end.time.getTime() - start.time.getTime());
-                    }
-                    text.append(labelDiv, durationDiv);
-                    var line = div('line');
-                    line.style.backgroundColor = color;
-                    line.style.float = 'left';
-                    row.append(line, text);
-                    var inputBuffer = div('inputbuffer');
-                    var inputWrapper_1 = div('inputwrapper');
-                    inputBuffer.appendChild(inputWrapper_1);
-                    row.append(inputBuffer);
-                    text.addEventListener('click', function () {
-                        startInput(inputWrapper_1, i, sortedEntries).focus();
-                    });
-                    elements.push(row);
-                    elemsByIndex.set(i, inputWrapper_1);
-                    if ((focusedEntry === null || focusedEntry === void 0 ? void 0 : focusedEntry.id) == (end === null || end === void 0 ? void 0 : end.id)) {
-                        var inputBox_1 = startInput(inputWrapper_1, i, sortedEntries);
-                        toStart.push(function () { return inputBox_1.focus(); });
-                    }
-                }
-            };
-            for (var i = sortedEntries.length - 1; i >= 0 && i >= sortedEntries.length - entriesToShow; i--) {
-                _loop_2(i);
+                    break;
             }
-            if (elem != null)
-                elem.append.apply(elem, __spread(elements));
-            try {
-                for (var toStart_1 = __values(toStart), toStart_1_1 = toStart_1.next(); !toStart_1_1.done; toStart_1_1 = toStart_1.next()) {
-                    var f = toStart_1_1.value;
-                    f();
-                }
+            if (focusedEntry != null)
+                startInput(indexOfEntry(focusedEntry)).focus();
+        }
+        function indexOfEntry(entry) {
+            for (var i = 0; i < entries.entries.length; i++) {
+                if (entries.entries[i].id == entry.id)
+                    return i;
             }
-            catch (e_6_1) { e_6 = { error: e_6_1 }; }
-            finally {
-                try {
-                    if (toStart_1_1 && !toStart_1_1.done && (_a = toStart_1.return)) _a.call(toStart_1);
-                }
-                finally { if (e_6) throw e_6.error; }
+            return entries.entries.length - 1;
+        }
+        function makeRange(start, end) {
+            start = entries.refresh(start);
+            end = (end === null) ? null : entries.refresh(end);
+            var label = (end == null) ? start.after || 'TBD' : labelFrom(start, end);
+            var color = (end == null) ? 'gray' : renderColor(getColor(label, profile));
+            var result = div('trackerrow');
+            var text = div('trackerlabel');
+            var labelDiv = div('labeldiv');
+            labelDiv.append.apply(labelDiv, __spread(renderLabel(label)));
+            var durationDiv = div('durationdiv');
+            if (end == null) {
+                setTimer(start.time, durationDiv);
+                heartbeats.push([start.time, durationDiv]);
+            }
+            else {
+                durationDiv.textContent = renderDuration(end.time.getTime() - start.time.getTime());
+            }
+            text.append(labelDiv, durationDiv);
+            var line = div('line');
+            line.style.backgroundColor = color;
+            line.style.float = 'left';
+            result.append(line, text);
+            var inputBuffer = div('inputbuffer');
+            var inputWrapper = div('inputwrapper');
+            inputBuffer.appendChild(inputWrapper);
+            result.append(inputBuffer);
+            inputWrapperAfterID.set(start.id, inputWrapper);
+            rangeDivAfterID.set(start.id, result);
+            text.addEventListener('click', function () {
+                startInput(indexOfEntry(start)).focus();
+            });
+            return result;
+        }
+        function makeBullet(end) {
+            var freshEnd = (end === null) ? null : entries.refresh(end);
+            if (freshEnd === null) {
+                var result = div('trackertimerow');
+                result.appendChild(div('nowdot'));
+                result.appendChild(div('timelabel'));
+                return result;
+            }
+            else {
+                var result = div('trackertimerow');
+                result.appendChild(div('dot'));
+                var time_1 = div('timelabel');
+                time_1.textContent = renderTime(freshEnd.time);
+                time_1.setAttribute('contenteditable', 'true');
+                time_1.addEventListener('blur', function () {
+                    time_1.textContent = renderTime(freshEnd.time);
+                });
+                time_1.addEventListener('keydown', function (e) {
+                    if (e.keyCode == 13) {
+                        e.preventDefault();
+                        var date = parseTime(time_1.textContent || '', freshEnd.time, 'closest');
+                        if (date != 'error') {
+                            callback({ kind: 'move', entry: freshEnd, time: date });
+                        }
+                    }
+                });
+                result.appendChild(time_1);
+                bulletDivByID.set(end == null ? null : end.id, result);
+                return result;
             }
         }
-        var credentials, profile, entries, focused, focusedEntry, entriesToShow, heartbeats;
+        function render() {
+            heartbeats = [];
+            var elements = [];
+            if (topElement != null)
+                topElement.innerHTML = '';
+            $('#inputs').unbind('keydown');
+            $('#inputs').bind('keydown', function (e) {
+                var e_6, _a;
+                function focusOnIndex(newIndex) {
+                    var inputBox = startInput(newIndex);
+                    inputBox.focus();
+                }
+                if (focusedIndex == null) {
+                    if (focusedEntry == null) {
+                        focusOnIndex(entries.entries.length - 1);
+                    }
+                    else {
+                        try {
+                            for (var _b = __values(enumerate(it(entries.entries))), _c = _b.next(); !_c.done; _c = _b.next()) {
+                                var _d = __read(_c.value, 2), i = _d[0], entry = _d[1];
+                                if (entry.id == focusedEntry.id) {
+                                    focusedIndex = i;
+                                }
+                            }
+                        }
+                        catch (e_6_1) { e_6 = { error: e_6_1 }; }
+                        finally {
+                            try {
+                                if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+                            }
+                            finally { if (e_6) throw e_6.error; }
+                        }
+                    }
+                }
+                if (e.keyCode == 38 && focusedIndex !== null) {
+                    focusOnIndex(focusedIndex + 1);
+                }
+                else if (e.keyCode == 40 && focusedIndex !== null) {
+                    focusOnIndex(focusedIndex - 1);
+                }
+            });
+            for (var i = entries.entries.length - 1; i >= 0 && i >= entries.entries.length - entriesToShow; i--) {
+                var end = (i == entries.entries.length - 1) ? null : entries.entries[i + 1];
+                var start = entries.entries[i];
+                var row = makeBullet(end);
+                elements.push(row);
+                if (start != null) {
+                    var row_1 = makeRange(start, end);
+                    elements.push(row_1);
+                }
+            }
+            if (topElement != null)
+                topElement.append.apply(topElement, __spread(elements));
+            startInput(entries.entries.length - 1).focus();
+        }
+        var credentials, profile, rawEntries, entries, focusedIndex, focusedEntry, entriesToShow, heartbeats, topElement, rangeDivAfterID, bulletDivByID, inputWrapperAfterID;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
@@ -625,12 +702,13 @@ export function loadTracker() {
                     profile = loadProfile();
                     return [4 /*yield*/, loadEntries(credentials)];
                 case 2:
-                    entries = _a.sent();
-                    if (entries.length == 0) {
-                        entries.push(makeNewEntry(now(), undefined, undefined));
-                        saveEntries(entries);
+                    rawEntries = _a.sent();
+                    if (rawEntries.length == 0) {
+                        rawEntries.push(makeNewEntry(now(), undefined, undefined));
+                        saveEntries(rawEntries);
                     }
-                    focused = null;
+                    entries = new EntryList(rawEntries);
+                    focusedIndex = null;
                     focusedEntry = null;
                     entriesToShow = maxEntriesToShow();
                     heartbeats = [];
@@ -650,6 +728,10 @@ export function loadTracker() {
                             finally { if (e_7) throw e_7.error; }
                         }
                     }, 1000);
+                    topElement = document.getElementById('inputs');
+                    rangeDivAfterID = new Map();
+                    bulletDivByID = new Map();
+                    inputWrapperAfterID = new Map();
                     render();
                     return [2 /*return*/];
             }
@@ -788,7 +870,7 @@ function renderBars(entries, buckets, profile) {
         finally { if (e_11) throw e_11.error; }
     }
     var data = [];
-    var _loop_3 = function (k) {
+    var _loop_2 = function (k) {
         data.push({
             type: "stackedColumn",
             showInLegend: false,
@@ -803,7 +885,7 @@ function renderBars(entries, buckets, profile) {
     try {
         for (var keys_1 = __values(keys), keys_1_1 = keys_1.next(); !keys_1_1.done; keys_1_1 = keys_1.next()) {
             var k = keys_1_1.value;
-            _loop_3(k);
+            _loop_2(k);
         }
     }
     catch (e_13_1) { e_13 = { error: e_13_1 }; }
@@ -956,6 +1038,7 @@ function namesFrom(label) {
     });
 }
 //returns labels starting from the most recent
+//TODO: can make faster
 function getDistinctLabels(entries) {
     var e_16, _a, e_17, _b, e_18, _c;
     var seen = new Set();
@@ -967,7 +1050,7 @@ function getDistinctLabels(entries) {
         }
     }
     try {
-        for (var _d = __values(revit(entries)), _e = _d.next(); !_e.done; _e = _d.next()) {
+        for (var _d = __values(revit(entries.entries)), _e = _d.next(); !_e.done; _e = _d.next()) {
             var entry = _e.value;
             try {
                 for (var _f = (e_17 = void 0, __values(namesFrom(entry.before))), _g = _f.next(); !_g.done; _g = _f.next()) {
@@ -1059,6 +1142,24 @@ function renderTime(date) {
     else
         return renderTime(myDate);
 }
+var entryPrefix = 'entry/';
+var entryPrefixLength = entryPrefix.length;
+function saveEntries(changedEntries) {
+    var e_19, _a;
+    try {
+        for (var changedEntries_1 = __values(changedEntries), changedEntries_1_1 = changedEntries_1.next(); !changedEntries_1_1.done; changedEntries_1_1 = changedEntries_1.next()) {
+            var entry = changedEntries_1_1.value;
+            localStorage.setItem("" + entryPrefix + entry.id, serializeEntry(entry));
+        }
+    }
+    catch (e_19_1) { e_19 = { error: e_19_1 }; }
+    finally {
+        try {
+            if (changedEntries_1_1 && !changedEntries_1_1.done && (_a = changedEntries_1.return)) _a.call(changedEntries_1);
+        }
+        finally { if (e_19) throw e_19.error; }
+    }
+}
 function timeToDateSpecString(date) {
     var now = convertDate(new Date());
     var myDate = convertDate(date);
@@ -1078,12 +1179,35 @@ function timeToDateSpecString(date) {
     var prefix = isMidnight ? 'start' : renderAMPM(myDate) + ",";
     return renderYear(myDate, prefix);
 }
-function saveEntries(entries) {
-    localStorage.setItem('entries', serializeEntries(entries));
-}
 export function getLocalEntries() {
-    var s = localStorage.getItem('entries');
-    return (s == null) ? [] : deserializeEntries(s);
+    var e_20, _a;
+    var result = [];
+    try {
+        for (var _b = __values(Object.entries(localStorage)), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var _d = __read(_c.value, 2), key = _d[0], value = _d[1];
+            if (key.substr(0, entryPrefixLength) == entryPrefix) {
+                var entry = deserializeEntry(value);
+                if (entry != null)
+                    result.push(entry);
+            }
+        }
+    }
+    catch (e_20_1) { e_20 = { error: e_20_1 }; }
+    finally {
+        try {
+            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+        }
+        finally { if (e_20) throw e_20.error; }
+    }
+    if (result.length == 0) {
+        var s = localStorage.getItem('entries');
+        if (s != null) {
+            var entries = deserializeEntries(s);
+            saveEntries(entries);
+            window.alert("Migrated local storage to new format. Refresh the page.");
+        }
+    }
+    return result;
 }
 function loadEntries(credentials) {
     return __awaiter(this, void 0, void 0, function () {
@@ -1097,8 +1221,7 @@ function loadEntries(credentials) {
                     remoteEntries = _a.sent();
                     merge = mergeAndUpdate(localEntries, remoteEntries);
                     sendUpdates(merge.yUpdates, credentials);
-                    if (merge.xUpdates.length > 0)
-                        saveEntries(merge.merged);
+                    saveEntries(merge.xUpdates);
                     return [2 /*return*/, merge.merged];
             }
         });
@@ -1135,7 +1258,7 @@ function minutesAfter(a, n) {
     return result;
 }
 function applyToTriples(f, xs) {
-    var e_19, _a;
+    var e_21, _a;
     var a = undefined;
     var b = undefined;
     var c = undefined;
@@ -1156,12 +1279,12 @@ function applyToTriples(f, xs) {
             }
         }
     }
-    catch (e_19_1) { e_19 = { error: e_19_1 }; }
+    catch (e_21_1) { e_21 = { error: e_21_1 }; }
     finally {
         try {
             if (xs_1_1 && !xs_1_1.done && (_a = xs_1.return)) _a.call(xs_1);
         }
-        finally { if (e_19) throw e_19.error; }
+        finally { if (e_21) throw e_21.error; }
     }
     addIf(xs[xs.length - 2], xs[xs.length - 1], undefined);
     return result;
@@ -1201,7 +1324,7 @@ function spansFromEntries(entries) {
 }
 // assumes that entries are sorted
 function spansInRange(start, end, entries) {
-    var e_20, _a;
+    var e_22, _a;
     function clip(span) {
         if (span.start.time < start && span.end.time < start) {
             return null;
@@ -1221,12 +1344,12 @@ function spansInRange(start, end, entries) {
                 result.push(span);
         }
     }
-    catch (e_20_1) { e_20 = { error: e_20_1 }; }
+    catch (e_22_1) { e_22 = { error: e_22_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_20) throw e_20.error; }
+        finally { if (e_22) throw e_22.error; }
     }
     return result;
 }
@@ -1269,7 +1392,7 @@ export function loadLabels() {
                     return [4 /*yield*/, loadEntries(credentials)];
                 case 2:
                     entries = _a.sent();
-                    showLabels(entries, credentials);
+                    showLabels(new EntryList(entries), credentials);
                     $('#labels').click(hideLabelPopup);
                     return [2 /*return*/];
             }
@@ -1277,7 +1400,7 @@ export function loadLabels() {
     });
 }
 function showLabels(entries, credentials) {
-    var e_21, _a;
+    var e_23, _a;
     var labels = getDistinctLabels(entries);
     var profile = loadProfile();
     labels.sort();
@@ -1310,12 +1433,12 @@ function showLabels(entries, credentials) {
             main.append(makeLabelDiv(label));
         }
     }
-    catch (e_21_1) { e_21 = { error: e_21_1 }; }
+    catch (e_23_1) { e_23 = { error: e_23_1 }; }
     finally {
         try {
             if (labels_1_1 && !labels_1_1.done && (_a = labels_1.return)) _a.call(labels_1);
         }
-        finally { if (e_21) throw e_21.error; }
+        finally { if (e_23) throw e_23.error; }
     }
 }
 export function loadCalendar() {
@@ -1323,19 +1446,20 @@ export function loadCalendar() {
         function callback(update) {
             applyAndSave(entries, update, credentials);
         }
-        var credentials, entries;
-        return __generator(this, function (_a) {
-            switch (_a.label) {
+        var credentials, entries, _a;
+        return __generator(this, function (_b) {
+            switch (_b.label) {
                 case 0:
                     $('#calendardiv').click(function (e) {
                         hideCalPopup();
                     });
                     return [4 /*yield*/, getCredentials()];
                 case 1:
-                    credentials = _a.sent();
+                    credentials = _b.sent();
+                    _a = EntryList.bind;
                     return [4 /*yield*/, loadEntries(credentials)];
                 case 2:
-                    entries = _a.sent();
+                    entries = new (_a.apply(EntryList, [void 0, _b.sent()]))();
                     showCalendar(entries, null, loadProfile(), callback);
                     return [2 /*return*/];
             }
@@ -1349,7 +1473,7 @@ function sortAndFilter(entries) {
 }
 //TODO less sort and filter...
 function showCalendar(entries, initialPopup, profile, callback) {
-    var e_22, _a, e_23, _b;
+    var e_24, _a, e_25, _b;
     var days = [];
     for (var i = 0; i < 7; i++) {
         var d = daysAgo(6 - i);
@@ -1361,12 +1485,12 @@ function showCalendar(entries, initialPopup, profile, callback) {
     function popupCallback(bounds) {
         function f(t) {
             callback(t);
-            showCalendar(sortAndFilter(entries), bounds, profile, callback);
+            showCalendar(entries, bounds, profile, callback);
         }
         return f;
     }
     function popup(startEntry, endEntry) {
-        zoomedPopup(sortAndFilter(entries), startEntry, endEntry, profile, popup, popupCallback([startEntry, endEntry]));
+        zoomedPopup(entries, startEntry, endEntry, profile, popup, popupCallback([startEntry, endEntry]));
     }
     try {
         for (var days_1 = __values(days), days_1_1 = days_1.next(); !days_1_1.done; days_1_1 = days_1.next()) {
@@ -1374,49 +1498,49 @@ function showCalendar(entries, initialPopup, profile, callback) {
             getCalendarColumn(day.index).empty();
         }
     }
-    catch (e_22_1) { e_22 = { error: e_22_1 }; }
+    catch (e_24_1) { e_24 = { error: e_24_1 }; }
     finally {
         try {
             if (days_1_1 && !days_1_1.done && (_a = days_1.return)) _a.call(days_1);
         }
-        finally { if (e_22) throw e_22.error; }
+        finally { if (e_24) throw e_24.error; }
     }
-    var _loop_4 = function (start, end) {
-        var e_24, _a;
+    var _loop_3 = function (start, end) {
+        var e_26, _a;
         try {
-            for (var days_2 = (e_24 = void 0, __values(days)), days_2_1 = days_2.next(); !days_2_1.done; days_2_1 = days_2.next()) {
+            for (var days_2 = (e_26 = void 0, __values(days)), days_2_1 = days_2.next(); !days_2_1.done; days_2_1 = days_2.next()) {
                 var day = days_2_1.value;
                 var range = partInDay(start.time, end.time, day);
                 if (range !== null) {
-                    var e_25 = calendarSpan(labelFrom(start, end), range.start, range.end, day.start, day.end, profile);
-                    e_25.click(function (e) {
+                    var e_27 = calendarSpan(labelFrom(start, end), range.start, range.end, day.start, day.end, profile);
+                    e_27.click(function (e) {
                         popup(start.id, end.id);
                         e.stopPropagation();
                     });
-                    getCalendarColumn(day.index).append(e_25);
+                    getCalendarColumn(day.index).append(e_27);
                 }
             }
         }
-        catch (e_24_1) { e_24 = { error: e_24_1 }; }
+        catch (e_26_1) { e_26 = { error: e_26_1 }; }
         finally {
             try {
                 if (days_2_1 && !days_2_1.done && (_a = days_2.return)) _a.call(days_2);
             }
-            finally { if (e_24) throw e_24.error; }
+            finally { if (e_26) throw e_26.error; }
         }
     };
     try {
-        for (var _c = __values(listPairs(it(sortAndFilter(entries)))), _d = _c.next(); !_d.done; _d = _c.next()) {
+        for (var _c = __values(listPairs(it(entries.entries))), _d = _c.next(); !_d.done; _d = _c.next()) {
             var _e = __read(_d.value, 2), start = _e[0], end = _e[1];
-            _loop_4(start, end);
+            _loop_3(start, end);
         }
     }
-    catch (e_23_1) { e_23 = { error: e_23_1 }; }
+    catch (e_25_1) { e_25 = { error: e_25_1 }; }
     finally {
         try {
             if (_d && !_d.done && (_b = _c.return)) _b.call(_c);
         }
-        finally { if (e_23) throw e_23.error; }
+        finally { if (e_25) throw e_25.error; }
     }
     if (initialPopup != null)
         popup(initialPopup[0], initialPopup[1]);
@@ -1438,7 +1562,7 @@ function group(name, view) {
     return start + "/" + group(rest, v.expand);
 }
 function oldSerializeProfile(profile) {
-    var e_26, _a;
+    var e_28, _a;
     var parts = [];
     try {
         for (var _b = __values(profile.colors.entries()), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -1446,12 +1570,12 @@ function oldSerializeProfile(profile) {
             parts.push(label + "," + colorToHex(color));
         }
     }
-    catch (e_26_1) { e_26 = { error: e_26_1 }; }
+    catch (e_28_1) { e_28 = { error: e_28_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_26) throw e_26.error; }
+        finally { if (e_28) throw e_28.error; }
     }
     return parts.join(';');
 }
@@ -1463,7 +1587,7 @@ function newSerializeProfile(profile) {
     return JSON.stringify(serializable);
 }
 function newDeserializeProfile(s) {
-    var e_27, _a, e_28, _b;
+    var e_29, _a, e_30, _b;
     try {
         var json = JSON.parse(s);
         var result = emptyProfile();
@@ -1479,12 +1603,12 @@ function newDeserializeProfile(s) {
                 result.colors.set(x[0], colorFromHex(x[1]));
             }
         }
-        catch (e_27_1) { e_27 = { error: e_27_1 }; }
+        catch (e_29_1) { e_29 = { error: e_29_1 }; }
         finally {
             try {
                 if (colors_1_1 && !colors_1_1.done && (_a = colors_1.return)) _a.call(colors_1);
             }
-            finally { if (e_27) throw e_27.error; }
+            finally { if (e_29) throw e_29.error; }
         }
         var expanded = json.expanded;
         if (!Array.isArray(expanded))
@@ -1497,12 +1621,12 @@ function newDeserializeProfile(s) {
                 result.expanded.add(x);
             }
         }
-        catch (e_28_1) { e_28 = { error: e_28_1 }; }
+        catch (e_30_1) { e_30 = { error: e_30_1 }; }
         finally {
             try {
                 if (expanded_1_1 && !expanded_1_1.done && (_b = expanded_1.return)) _b.call(expanded_1);
             }
-            finally { if (e_28) throw e_28.error; }
+            finally { if (e_30) throw e_30.error; }
         }
         return result;
     }
@@ -1512,7 +1636,7 @@ function newDeserializeProfile(s) {
     }
 }
 function oldDeserializeProfile(s) {
-    var e_29, _a;
+    var e_31, _a;
     var result = emptyProfile();
     try {
         for (var _b = __values(s.split(';')), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -1523,12 +1647,12 @@ function oldDeserializeProfile(s) {
             }
         }
     }
-    catch (e_29_1) { e_29 = { error: e_29_1 }; }
+    catch (e_31_1) { e_31 = { error: e_31_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_29) throw e_29.error; }
+        finally { if (e_31) throw e_31.error; }
     }
     return result;
 }
@@ -1663,13 +1787,14 @@ function assertNever(value) {
 function insertAt(toInsert, xs, index) {
     return xs.slice(0, index).concat([toInsert]).concat(xs.slice(index));
 }
+//TODO: could be better
 function neighbors(entries, entry) {
-    var e_30, _a;
+    var e_32, _a;
     var before = null;
     var after = null;
     try {
-        for (var entries_1 = __values(entries), entries_1_1 = entries_1.next(); !entries_1_1.done; entries_1_1 = entries_1.next()) {
-            var x = entries_1_1.value;
+        for (var _b = __values(entries.entries), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var x = _c.value;
             if (x.time < entry.time) {
                 if (before == null || before.time < x.time) {
                     before = x;
@@ -1682,12 +1807,12 @@ function neighbors(entries, entry) {
             }
         }
     }
-    catch (e_30_1) { e_30 = { error: e_30_1 }; }
+    catch (e_32_1) { e_32 = { error: e_32_1 }; }
     finally {
         try {
-            if (entries_1_1 && !entries_1_1.done && (_a = entries_1.return)) _a.call(entries_1);
+            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_30) throw e_30.error; }
+        finally { if (e_32) throw e_32.error; }
     }
     return [before, after];
 }
@@ -1713,7 +1838,7 @@ function maxEntriesToShow() {
     return n;
 }
 function bulkUpsertInPlace(upserts, entries) {
-    var e_31, _a, e_32, _b;
+    var e_33, _a, e_34, _b;
     var byId = new Map();
     try {
         for (var upserts_1 = __values(upserts), upserts_1_1 = upserts_1.next(); !upserts_1_1.done; upserts_1_1 = upserts_1.next()) {
@@ -1721,12 +1846,12 @@ function bulkUpsertInPlace(upserts, entries) {
             byId.set(upsert.id, upsert);
         }
     }
-    catch (e_31_1) { e_31 = { error: e_31_1 }; }
+    catch (e_33_1) { e_33 = { error: e_33_1 }; }
     finally {
         try {
             if (upserts_1_1 && !upserts_1_1.done && (_a = upserts_1.return)) _a.call(upserts_1);
         }
-        finally { if (e_31) throw e_31.error; }
+        finally { if (e_33) throw e_33.error; }
     }
     for (var i = 0; i < entries.length; i++) {
         var upsert = byId.get(entries[i].id);
@@ -1741,130 +1866,228 @@ function bulkUpsertInPlace(upserts, entries) {
             entries.push(upsert);
         }
     }
-    catch (e_32_1) { e_32 = { error: e_32_1 }; }
+    catch (e_34_1) { e_34 = { error: e_34_1 }; }
     finally {
         try {
             if (_d && !_d.done && (_b = _c.return)) _b.call(_c);
         }
-        finally { if (e_32) throw e_32.error; }
+        finally { if (e_34) throw e_34.error; }
     }
 }
-//Mutates entries
-//Also mutates updates
-function applyUpdate(update, entries, updates) {
-    var e_33, _a, e_34, _b;
+var EntryList = /** @class */ (function () {
+    function EntryList(entries) {
+        var e_35, _a;
+        this.byID = new Map();
+        this.entries = sortAndFilter(entries);
+        try {
+            for (var _b = __values(this.entries), _c = _b.next(); !_c.done; _c = _b.next()) {
+                var entry = _c.value;
+                this.byID.set(entry.id, entry);
+            }
+        }
+        catch (e_35_1) { e_35 = { error: e_35_1 }; }
+        finally {
+            try {
+                if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+            }
+            finally { if (e_35) throw e_35.error; }
+        }
+    }
+    EntryList.prototype.delete = function (entry) {
+        this.byID.delete(entry.id);
+        this.entries = this.entries.filter(function (x) { return x.id != entry.id; });
+    };
+    EntryList.prototype.insert = function (entry) {
+        var t = entry.time.getTime();
+        var index = 0;
+        while (index < this.entries.length && this.entries[index].time.getTime() <= t) {
+            index += 1;
+        }
+        this.entries = insertAt(entry, this.entries, index);
+        this.byID.set(entry.id, entry);
+    };
+    EntryList.prototype.upsert = function (entry) {
+        this.delete(entry);
+        if (!entry.deleted)
+            this.insert(entry);
+    };
+    EntryList.prototype.refresh = function (entry) {
+        return this.byID.get(entry.id) || entry;
+    };
+    return EntryList;
+}());
+//    | {kind: 'adjustTime', entry: Entry} // TODO: simpler format for updates that don't change the order
+// TODO: upsert is terrible and this just fails if you pass in a stale entry :(
+// updates should just say the ID they want to update, not give the whole entry, terrible...
+//Mutates entries in place
+//Also updates in place
+//Also inserts displayupdates into the list so that we can update tracker display
+function applyUpdate(update, entries, updatedEntries, displayCallback) {
+    var e_36, _a, e_37, _b, e_38, _c;
+    if (displayCallback === void 0) { displayCallback = function () { }; }
     function upsert(entry) {
         var newEntry = __assign(__assign({}, entry), { lastModified: now() });
-        upsertInPlace(newEntry, entries);
-        upsertInPlace(newEntry, updates);
+        entries.upsert(newEntry);
+        upsertInPlace(newEntry, updatedEntries);
     }
     function bulkUpsert(upserts) {
+        var e_39, _a;
         var newEntries = upserts.map(function (entry) { return (__assign(__assign({}, entry), { lastModified: now() })); });
-        bulkUpsertInPlace(newEntries, entries);
-        bulkUpsertInPlace(newEntries, updates);
+        try {
+            for (var newEntries_1 = __values(newEntries), newEntries_1_1 = newEntries_1.next(); !newEntries_1_1.done; newEntries_1_1 = newEntries_1.next()) {
+                var entry = newEntries_1_1.value;
+                entries.upsert(entry);
+            }
+        }
+        catch (e_39_1) { e_39 = { error: e_39_1 }; }
+        finally {
+            try {
+                if (newEntries_1_1 && !newEntries_1_1.done && (_a = newEntries_1.return)) _a.call(newEntries_1);
+            }
+            finally { if (e_39) throw e_39.error; }
+        }
+        bulkUpsertInPlace(newEntries, updatedEntries);
+    }
+    function display(du) {
+        displayCallback(du);
     }
     switch (update.kind) {
         case 'composite':
             try {
-                for (var _c = __values(update.updates), _d = _c.next(); !_d.done; _d = _c.next()) {
-                    var u = _d.value;
-                    applyUpdate(u, entries, updates);
+                for (var _d = __values(update.updates), _e = _d.next(); !_e.done; _e = _d.next()) {
+                    var u = _e.value;
+                    applyUpdate(u, entries, updatedEntries, displayCallback);
                 }
             }
-            catch (e_33_1) { e_33 = { error: e_33_1 }; }
+            catch (e_36_1) { e_36 = { error: e_36_1 }; }
             finally {
                 try {
-                    if (_d && !_d.done && (_a = _c.return)) _a.call(_c);
+                    if (_e && !_e.done && (_a = _d.return)) _a.call(_d);
                 }
-                finally { if (e_33) throw e_33.error; }
+                finally { if (e_36) throw e_36.error; }
             }
             break;
         case 'relabel':
             if (update.before !== undefined)
-                upsert(__assign(__assign({}, update.before), { after: update.label }));
+                upsert(__assign(__assign({}, entries.refresh(update.before)), { after: update.label }));
             if (update.after !== undefined)
-                upsert(__assign(__assign({}, update.after), { before: update.label }));
+                upsert(__assign(__assign({}, entries.refresh(update.after)), { before: update.label }));
+            display({ kind: 'relabel', before: update.before, after: update.after });
             break;
         case 'split':
             var newEntry = makeNewEntry(update.time, update.labelBefore || update.before.after || update.after.before, update.labelAfter || update.after.before || update.before.after);
+            console.log(entries.entries.length);
             upsert(newEntry);
+            console.log(entries.entries.length);
+            display({ kind: 'insert', entry: newEntry });
             if (update.labelBefore !== undefined) {
-                upsert(__assign(__assign({}, update.before), { after: update.labelBefore }));
+                console.log(entries.entries.length);
+                upsert(__assign(__assign({}, entries.refresh(update.before)), { after: update.labelBefore }));
+                console.log(entries.entries.length);
+                display({ kind: 'relabel', before: update.before });
             }
             if (update.labelAfter !== undefined) {
-                upsert(__assign(__assign({}, update.after), { before: update.labelAfter }));
+                upsert(__assign(__assign({}, entries.refresh(update.after)), { before: update.labelAfter }));
+                display({ kind: 'relabel', after: update.after });
             }
             break;
         case 'merge': {
-            var _e = __read(neighbors(entries, update.entry), 2), a = _e[0], b = _e[1];
-            if (a != null)
-                upsert(__assign(__assign({}, a), { after: update.label }));
-            if (b != null)
-                upsert(__assign(__assign({}, b), { before: update.label }));
-            upsert(__assign(__assign({}, update.entry), { deleted: true }));
+            var _f = __read(neighbors(entries, update.entry), 2), a_1 = _f[0], b_1 = _f[1];
+            if (a_1 != null)
+                upsert(__assign(__assign({}, a_1), { after: update.label }));
+            if (b_1 != null)
+                upsert(__assign(__assign({}, b_1), { before: update.label }));
+            upsert(__assign(__assign({}, entries.refresh(update.entry)), { deleted: true }));
+            display({ kind: 'delete', entry: update.entry });
             break;
         }
         case 'move':
-            upsert(__assign(__assign({}, update.entry), { time: update.time }));
+            //TODO: could make this adjustTime
+            var _g = __read(neighbors(entries, update.entry), 2), a = _g[0], b = _g[1];
+            upsert(__assign(__assign({}, entries.refresh(update.entry)), { time: update.time }));
+            display({ kind: 'delete', entry: update.entry });
+            display({ kind: 'insert', entry: update.entry });
             break;
         case 'append': {
             var newEntry_1 = makeNewEntry(update.time, update.before, update.after);
             upsert(newEntry_1);
+            display({ kind: 'insert', entry: newEntry_1 });
             break;
         }
         case 'spliceSplit': {
             var newEntry_2 = makeNewEntry(update.time, update.label, update.before.after);
             upsert(newEntry_2);
-            upsert(__assign(__assign({}, update.before), { after: update.label }));
+            display({ kind: 'insert', entry: newEntry_2 });
+            upsert(__assign(__assign({}, entries.refresh(update.before)), { after: update.label }));
+            display({ kind: 'relabel', before: update.before });
             break;
         }
         case 'bulkRename':
             //TODO: make a bulkUpsert method
             var upserts = [];
+            var displayUpdates = [];
             try {
-                for (var entries_2 = __values(entries), entries_2_1 = entries_2.next(); !entries_2_1.done; entries_2_1 = entries_2.next()) {
-                    var entry = entries_2_1.value;
-                    var newEntry_3 = entry;
+                for (var _h = __values(entries.entries), _j = _h.next(); !_j.done; _j = _h.next()) {
+                    var entry_1 = _j.value;
+                    var newEntry_3 = entry_1;
                     var changed = false;
                     if (matchesLabelRemap(newEntry_3.before, update.from, update.moveChildren)) {
                         newEntry_3 = __assign(__assign({}, newEntry_3), { before: remapLabel(newEntry_3.before, update.from, update.to, update.moveChildren) });
                         changed = true;
+                        displayUpdates.push({ kind: 'relabel', after: entry_1 });
                     }
                     if (matchesLabelRemap(newEntry_3.after, update.from, update.moveChildren)) {
                         newEntry_3 = __assign(__assign({}, newEntry_3), { after: remapLabel(newEntry_3.after, update.from, update.to, update.moveChildren) });
                         changed = true;
+                        displayUpdates.push({ kind: 'relabel', before: entry_1 });
                     }
                     if (changed)
                         upserts.push(newEntry_3);
                 }
             }
-            catch (e_34_1) { e_34 = { error: e_34_1 }; }
+            catch (e_37_1) { e_37 = { error: e_37_1 }; }
             finally {
                 try {
-                    if (entries_2_1 && !entries_2_1.done && (_b = entries_2.return)) _b.call(entries_2);
+                    if (_j && !_j.done && (_b = _h.return)) _b.call(_h);
                 }
-                finally { if (e_34) throw e_34.error; }
+                finally { if (e_37) throw e_37.error; }
             }
             bulkUpsert(upserts);
+            try {
+                for (var displayUpdates_1 = __values(displayUpdates), displayUpdates_1_1 = displayUpdates_1.next(); !displayUpdates_1_1.done; displayUpdates_1_1 = displayUpdates_1.next()) {
+                    var du = displayUpdates_1_1.value;
+                    display(du);
+                }
+            }
+            catch (e_38_1) { e_38 = { error: e_38_1 }; }
+            finally {
+                try {
+                    if (displayUpdates_1_1 && !displayUpdates_1_1.done && (_c = displayUpdates_1.return)) _c.call(displayUpdates_1);
+                }
+                finally { if (e_38) throw e_38.error; }
+            }
             break;
         case 'delete':
-            upsert(__assign(__assign({}, update.entry), { deleted: true }));
+            debugger;
+            var entry = entries.refresh(update.entry);
+            upsert(__assign(__assign({}, entry), { deleted: true }));
             if (update.entry.before !== undefined) {
                 if (update.shiftForward !== undefined) {
-                    upsert(__assign(__assign({}, update.shiftForward), { before: update.entry.before }));
+                    upsert(__assign(__assign({}, entries.refresh(update.shiftForward)), { before: entry.before }));
                 }
                 if (update.reflectBack !== undefined) {
-                    upsert(__assign(__assign({}, update.reflectBack), { after: update.entry.before }));
+                    upsert(__assign(__assign({}, entries.refresh(update.reflectBack)), { after: entry.before }));
                 }
             }
             if (update.entry.after !== undefined) {
                 if (update.shiftBack !== undefined) {
-                    upsert(__assign(__assign({}, update.shiftBack), { after: update.entry.after }));
+                    upsert(__assign(__assign({}, entries.refresh(update.shiftBack)), { after: entry.after }));
                 }
                 if (update.reflectForward !== undefined) {
-                    upsert(__assign(__assign({}, update.reflectForward), { before: update.entry.after }));
+                    upsert(__assign(__assign({}, entries.refresh(update.reflectForward)), { before: entry.after }));
                 }
             }
+            display({ kind: 'delete', entry: entry });
             break;
         default: assertNever(update);
     }
@@ -1892,8 +2115,8 @@ function remapLabel(label, from, to, moveChildren) {
     }
 }
 function listPairsAndEnds(xs) {
-    var a, b, xs_2, xs_2_1, x, e_35_1;
-    var e_35, _a;
+    var a, b, xs_2, xs_2_1, x, e_40_1;
+    var e_40, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -1918,14 +2141,14 @@ function listPairsAndEnds(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_35_1 = _b.sent();
-                e_35 = { error: e_35_1 };
+                e_40_1 = _b.sent();
+                e_40 = { error: e_40_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_2_1 && !xs_2_1.done && (_a = xs_2.return)) _a.call(xs_2);
                 }
-                finally { if (e_35) throw e_35.error; }
+                finally { if (e_40) throw e_40.error; }
                 return [7 /*endfinally*/];
             case 8:
                 if (!(b != null)) return [3 /*break*/, 10];
@@ -1938,8 +2161,8 @@ function listPairsAndEnds(xs) {
     });
 }
 function listPairs(xs) {
-    var _a, _b, _c, x, y, e_36_1;
-    var e_36, _d;
+    var _a, _b, _c, x, y, e_41_1;
+    var e_41, _d;
     return __generator(this, function (_e) {
         switch (_e.label) {
             case 0:
@@ -1959,22 +2182,22 @@ function listPairs(xs) {
                 return [3 /*break*/, 1];
             case 4: return [3 /*break*/, 7];
             case 5:
-                e_36_1 = _e.sent();
-                e_36 = { error: e_36_1 };
+                e_41_1 = _e.sent();
+                e_41 = { error: e_41_1 };
                 return [3 /*break*/, 7];
             case 6:
                 try {
                     if (_b && !_b.done && (_d = _a.return)) _d.call(_a);
                 }
-                finally { if (e_36) throw e_36.error; }
+                finally { if (e_41) throw e_41.error; }
                 return [7 /*endfinally*/];
             case 7: return [2 /*return*/];
         }
     });
 }
 function enumerate(xs) {
-    var i, xs_3, xs_3_1, x, e_37_1;
-    var e_37, _a;
+    var i, xs_3, xs_3_1, x, e_42_1;
+    var e_42, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -1997,14 +2220,14 @@ function enumerate(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_37_1 = _b.sent();
-                e_37 = { error: e_37_1 };
+                e_42_1 = _b.sent();
+                e_42 = { error: e_42_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_3_1 && !xs_3_1.done && (_a = xs_3.return)) _a.call(xs_3);
                 }
-                finally { if (e_37) throw e_37.error; }
+                finally { if (e_42) throw e_42.error; }
                 return [7 /*endfinally*/];
             case 8: return [2 /*return*/];
         }
@@ -2053,8 +2276,8 @@ function revit(xs, limit) {
 }
 //Returns the same set of elements, but with booleans flagging first and last
 function markTails(xs) {
-    var first, next, start, xs_4, xs_4_1, x, e_38_1;
-    var e_38, _a;
+    var first, next, start, xs_4, xs_4_1, x, e_43_1;
+    var e_43, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -2085,14 +2308,14 @@ function markTails(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_38_1 = _b.sent();
-                e_38 = { error: e_38_1 };
+                e_43_1 = _b.sent();
+                e_43 = { error: e_43_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_4_1 && !xs_4_1.done && (_a = xs_4.return)) _a.call(xs_4);
                 }
-                finally { if (e_38) throw e_38.error; }
+                finally { if (e_43) throw e_43.error; }
                 return [7 /*endfinally*/];
             case 8: return [4 /*yield*/, [first, true, next]];
             case 9:
@@ -2264,22 +2487,22 @@ function hash(s) {
 //Gives the merged list of updates, as well as updates that you'd have to apply to either side
 //to bring it up to merged
 export function mergeAndUpdate(xs, ys) {
-    var e_39, _a, e_40, _b;
+    var e_44, _a, e_45, _b;
     function makeMap(entries) {
-        var e_41, _a;
+        var e_46, _a;
         var result = new Map();
         try {
-            for (var entries_3 = __values(entries), entries_3_1 = entries_3.next(); !entries_3_1.done; entries_3_1 = entries_3.next()) {
-                var entry = entries_3_1.value;
+            for (var entries_1 = __values(entries), entries_1_1 = entries_1.next(); !entries_1_1.done; entries_1_1 = entries_1.next()) {
+                var entry = entries_1_1.value;
                 result.set(entry.id, entry);
             }
         }
-        catch (e_41_1) { e_41 = { error: e_41_1 }; }
+        catch (e_46_1) { e_46 = { error: e_46_1 }; }
         finally {
             try {
-                if (entries_3_1 && !entries_3_1.done && (_a = entries_3.return)) _a.call(entries_3);
+                if (entries_1_1 && !entries_1_1.done && (_a = entries_1.return)) _a.call(entries_1);
             }
-            finally { if (e_41) throw e_41.error; }
+            finally { if (e_46) throw e_46.error; }
         }
         return result;
     }
@@ -2301,12 +2524,12 @@ export function mergeAndUpdate(xs, ys) {
             }
         }
     }
-    catch (e_39_1) { e_39 = { error: e_39_1 }; }
+    catch (e_44_1) { e_44 = { error: e_44_1 }; }
     finally {
         try {
             if (xs_5_1 && !xs_5_1.done && (_a = xs_5.return)) _a.call(xs_5);
         }
-        finally { if (e_39) throw e_39.error; }
+        finally { if (e_44) throw e_44.error; }
     }
     try {
         for (var ys_1 = __values(ys), ys_1_1 = ys_1.next(); !ys_1_1.done; ys_1_1 = ys_1.next()) {
@@ -2318,12 +2541,12 @@ export function mergeAndUpdate(xs, ys) {
             }
         }
     }
-    catch (e_40_1) { e_40 = { error: e_40_1 }; }
+    catch (e_45_1) { e_45 = { error: e_45_1 }; }
     finally {
         try {
             if (ys_1_1 && !ys_1_1.done && (_b = ys_1.return)) _b.call(ys_1);
         }
-        finally { if (e_40) throw e_40.error; }
+        finally { if (e_45) throw e_45.error; }
     }
     return { merged: merged, xUpdates: xUpdates, yUpdates: yUpdates };
 }
@@ -2376,7 +2599,7 @@ function matchLabel(category, label) {
         return null;
 }
 function makeReport(entries, start, end, topLabels) {
-    var e_42, _a, e_43, _b;
+    var e_47, _a, e_48, _b;
     entries = sortAndFilter(entries);
     var result = {};
     var total = 0;
@@ -2390,34 +2613,34 @@ function makeReport(entries, start, end, topLabels) {
                 var dt = t1.getTime() - t0.getTime();
                 total += dt;
                 try {
-                    for (var topLabels_1 = (e_43 = void 0, __values(topLabels)), topLabels_1_1 = topLabels_1.next(); !topLabels_1_1.done; topLabels_1_1 = topLabels_1.next()) {
+                    for (var topLabels_1 = (e_48 = void 0, __values(topLabels)), topLabels_1_1 = topLabels_1.next(); !topLabels_1_1.done; topLabels_1_1 = topLabels_1.next()) {
                         var topLabel = topLabels_1_1.value;
                         var subLabel = matchLabel(topLabel, label);
                         if (t0 != t1 && subLabel != null)
                             addToReport(subLabel, dt, result);
                     }
                 }
-                catch (e_43_1) { e_43 = { error: e_43_1 }; }
+                catch (e_48_1) { e_48 = { error: e_48_1 }; }
                 finally {
                     try {
                         if (topLabels_1_1 && !topLabels_1_1.done && (_b = topLabels_1.return)) _b.call(topLabels_1);
                     }
-                    finally { if (e_43) throw e_43.error; }
+                    finally { if (e_48) throw e_48.error; }
                 }
             }
         }
     }
-    catch (e_42_1) { e_42 = { error: e_42_1 }; }
+    catch (e_47_1) { e_47 = { error: e_47_1 }; }
     finally {
         try {
             if (_d && !_d.done && (_a = _c.return)) _a.call(_c);
         }
-        finally { if (e_42) throw e_42.error; }
+        finally { if (e_47) throw e_47.error; }
     }
     return [result, total];
 }
 function reportToString(report) {
-    var e_44, _a;
+    var e_49, _a;
     var parts = [];
     try {
         for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -2425,12 +2648,12 @@ function reportToString(report) {
             parts.push(label + ":" + time + ":" + reportToString(sub));
         }
     }
-    catch (e_44_1) { e_44 = { error: e_44_1 }; }
+    catch (e_49_1) { e_49 = { error: e_49_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_44) throw e_44.error; }
+        finally { if (e_49) throw e_49.error; }
     }
     return "{" + parts.join(',') + "}";
 }
@@ -2438,7 +2661,7 @@ function serializeReport(report) {
     return JSON.stringify(report);
 }
 function purifyReport(impure) {
-    var e_45, _a;
+    var e_50, _a;
     var result = {};
     try {
         for (var _b = __values(Object.entries(impure)), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -2457,12 +2680,12 @@ function purifyReport(impure) {
             }
         }
     }
-    catch (e_45_1) { e_45 = { error: e_45_1 }; }
+    catch (e_50_1) { e_50 = { error: e_50_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_45) throw e_45.error; }
+        finally { if (e_50) throw e_50.error; }
     }
     return result;
 }
@@ -2474,7 +2697,7 @@ function len(x) {
     return Object.keys(x).length;
 }
 function total(x) {
-    var e_46, _a;
+    var e_51, _a;
     var result = 0;
     try {
         for (var _b = __values(Object.values(x)), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -2482,23 +2705,23 @@ function total(x) {
             result += t;
         }
     }
-    catch (e_46_1) { e_46 = { error: e_46_1 }; }
+    catch (e_51_1) { e_51 = { error: e_51_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_46) throw e_46.error; }
+        finally { if (e_51) throw e_51.error; }
     }
     return result;
 }
 // Compress paths (with no branches) into single steps
 export function flattenReport(report) {
-    var e_47, _a;
+    var e_52, _a;
     var entries = Object.entries(report);
     var result = {};
     try {
-        for (var entries_4 = __values(entries), entries_4_1 = entries_4.next(); !entries_4_1.done; entries_4_1 = entries_4.next()) {
-            var _b = __read(entries_4_1.value, 2), label = _b[0], _c = __read(_b[1], 2), time = _c[0], sub = _c[1];
+        for (var entries_2 = __values(entries), entries_2_1 = entries_2.next(); !entries_2_1.done; entries_2_1 = entries_2.next()) {
+            var _b = __read(entries_2_1.value, 2), label = _b[0], _c = __read(_b[1], 2), time = _c[0], sub = _c[1];
             var flatSub = flattenReport(sub);
             var subEntries = Object.entries(flatSub);
             if (subEntries.length == 1 && subEntries[0][1][0] == time) {
@@ -2509,12 +2732,12 @@ export function flattenReport(report) {
             }
         }
     }
-    catch (e_47_1) { e_47 = { error: e_47_1 }; }
+    catch (e_52_1) { e_52 = { error: e_52_1 }; }
     finally {
         try {
-            if (entries_4_1 && !entries_4_1.done && (_a = entries_4.return)) _a.call(entries_4);
+            if (entries_2_1 && !entries_2_1.done && (_a = entries_2.return)) _a.call(entries_2);
         }
-        finally { if (e_47) throw e_47.error; }
+        finally { if (e_52) throw e_52.error; }
     }
     return result;
 }
@@ -2529,7 +2752,7 @@ function capReport(report) {
     return result;
 }
 function totalReportTime(report) {
-    var e_48, _a;
+    var e_53, _a;
     var result = 0;
     try {
         for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -2537,12 +2760,12 @@ function totalReportTime(report) {
             result += time;
         }
     }
-    catch (e_48_1) { e_48 = { error: e_48_1 }; }
+    catch (e_53_1) { e_53 = { error: e_53_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_48) throw e_48.error; }
+        finally { if (e_53) throw e_53.error; }
     }
     return result;
 }
@@ -2627,7 +2850,7 @@ function displayReportTime(time, total, display, totalInReport) {
 }
 function renderReport(report, timeDisplay, total, // this is the total including items not in the report
 profile, editParams, indentation, reportTotal, expanded, prefix) {
-    var e_49, _a, e_50, _b;
+    var e_54, _a, e_55, _b;
     if (editParams === void 0) { editParams = null; }
     if (indentation === void 0) { indentation = 0; }
     if (reportTotal === void 0) { reportTotal = totalReportTime(report); }
@@ -2669,46 +2892,46 @@ profile, editParams, indentation, reportTotal, expanded, prefix) {
     var entries = Object.entries(report);
     entries.sort(function (x, y) { return y[1][0] - x[1][0]; });
     try {
-        for (var entries_5 = __values(entries), entries_5_1 = entries_5.next(); !entries_5_1.done; entries_5_1 = entries_5.next()) {
-            var _c = __read(entries_5_1.value, 2), label = _c[0], _d = __read(_c[1], 2), time = _d[0], sub = _d[1];
+        for (var entries_3 = __values(entries), entries_3_1 = entries_3.next(); !entries_3_1.done; entries_3_1 = entries_3.next()) {
+            var _c = __read(entries_3_1.value, 2), label = _c[0], _d = __read(_c[1], 2), time = _d[0], sub = _d[1];
             var _e = __read(renderLineAndChildren(label, time, sub), 2), elements = _e[0], expandChildren = _e[1];
             try {
-                for (var elements_1 = (e_50 = void 0, __values(elements)), elements_1_1 = elements_1.next(); !elements_1_1.done; elements_1_1 = elements_1.next()) {
-                    var e_51 = elements_1_1.value;
-                    result.append(e_51);
+                for (var elements_1 = (e_55 = void 0, __values(elements)), elements_1_1 = elements_1.next(); !elements_1_1.done; elements_1_1 = elements_1.next()) {
+                    var e_56 = elements_1_1.value;
+                    result.append(e_56);
                 }
             }
-            catch (e_50_1) { e_50 = { error: e_50_1 }; }
+            catch (e_55_1) { e_55 = { error: e_55_1 }; }
             finally {
                 try {
                     if (elements_1_1 && !elements_1_1.done && (_b = elements_1.return)) _b.call(elements_1);
                 }
-                finally { if (e_50) throw e_50.error; }
+                finally { if (e_55) throw e_55.error; }
             }
             childExpanders.push(expandChildren);
         }
     }
-    catch (e_49_1) { e_49 = { error: e_49_1 }; }
+    catch (e_54_1) { e_54 = { error: e_54_1 }; }
     finally {
         try {
-            if (entries_5_1 && !entries_5_1.done && (_a = entries_5.return)) _a.call(entries_5);
+            if (entries_3_1 && !entries_3_1.done && (_a = entries_3.return)) _a.call(entries_3);
         }
-        finally { if (e_49) throw e_49.error; }
+        finally { if (e_54) throw e_54.error; }
     }
     return [result, function (expand) {
-            var e_52, _a;
+            var e_57, _a;
             try {
                 for (var childExpanders_1 = __values(childExpanders), childExpanders_1_1 = childExpanders_1.next(); !childExpanders_1_1.done; childExpanders_1_1 = childExpanders_1.next()) {
                     var f = childExpanders_1_1.value;
                     f(expand);
                 }
             }
-            catch (e_52_1) { e_52 = { error: e_52_1 }; }
+            catch (e_57_1) { e_57 = { error: e_57_1 }; }
             finally {
                 try {
                     if (childExpanders_1_1 && !childExpanders_1_1.done && (_a = childExpanders_1.return)) _a.call(childExpanders_1);
                 }
-                finally { if (e_52) throw e_52.error; }
+                finally { if (e_57) throw e_57.error; }
             }
         }];
 }
@@ -2769,7 +2992,7 @@ function coerceTimeDisplay(s) {
     return undefined;
 }
 function readRadio(name) {
-    var e_53, _a;
+    var e_58, _a;
     var nodes = document.getElementsByName(name);
     try {
         for (var nodes_1 = __values(nodes), nodes_1_1 = nodes_1.next(); !nodes_1_1.done; nodes_1_1 = nodes_1.next()) {
@@ -2779,17 +3002,17 @@ function readRadio(name) {
                 return n.value;
         }
     }
-    catch (e_53_1) { e_53 = { error: e_53_1 }; }
+    catch (e_58_1) { e_58 = { error: e_58_1 }; }
     finally {
         try {
             if (nodes_1_1 && !nodes_1_1.done && (_a = nodes_1.return)) _a.call(nodes_1);
         }
-        finally { if (e_53) throw e_53.error; }
+        finally { if (e_58) throw e_58.error; }
     }
     return null;
 }
 function setRadio(name, value) {
-    var e_54, _a;
+    var e_59, _a;
     var nodes = document.getElementsByName(name);
     try {
         for (var nodes_2 = __values(nodes), nodes_2_1 = nodes_2.next(); !nodes_2_1.done; nodes_2_1 = nodes_2.next()) {
@@ -2798,12 +3021,12 @@ function setRadio(name, value) {
             radio.checked = (radio.value == value);
         }
     }
-    catch (e_54_1) { e_54 = { error: e_54_1 }; }
+    catch (e_59_1) { e_59 = { error: e_59_1 }; }
     finally {
         try {
             if (nodes_2_1 && !nodes_2_1.done && (_a = nodes_2.return)) _a.call(nodes_2);
         }
-        finally { if (e_54) throw e_54.error; }
+        finally { if (e_59) throw e_59.error; }
     }
 }
 export function loadReport() {
@@ -2848,20 +3071,21 @@ export function loadReport() {
             displayReport(report, total, params.timeDisplay || 'total', newEditParams, profile);
         }
         function render(params) {
-            var reportAndTotal = reportFromParams(entries, params);
+            var reportAndTotal = reportFromParams(entries.entries, params);
             if (reportAndTotal != null) {
                 display(reportAndTotal[0], reportAndTotal[1], params);
             }
         }
-        var credentials, entries, profile, editParams;
-        return __generator(this, function (_b) {
-            switch (_b.label) {
+        var credentials, entries, _b, profile, editParams;
+        return __generator(this, function (_c) {
+            switch (_c.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
                 case 1:
-                    credentials = _b.sent();
+                    credentials = _c.sent();
+                    _b = EntryList.bind;
                     return [4 /*yield*/, loadEntries(credentials)];
                 case 2:
-                    entries = _b.sent();
+                    entries = new (_b.apply(EntryList, [void 0, _c.sent()]))();
                     profile = loadProfile();
                     editParams = makeEditParams(entries, credentials);
                     $('.reportParamInput').keydown(kd);
@@ -2875,7 +3099,7 @@ export function loadReport() {
                     document.getElementsByName('timeDisplay').forEach(function (e) { return e.addEventListener('change', function () { return render(paramsFromInput()); }); });
                     $('#export').click(function () {
                         var params = paramsFromInput();
-                        var reportAndTotal = reportFromParams(entries, params);
+                        var reportAndTotal = reportFromParams(entries.entries, params);
                         if (reportAndTotal != null) {
                             var report = reportAndTotal[0];
                             var total_1 = reportAndTotal[1];

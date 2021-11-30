@@ -25,6 +25,31 @@ export function serializeEntries(entries) {
         id: x.id,
     }); }));
 }
+export function serializeEntry(x) {
+    return JSON.stringify({
+        time: x.time.getTime(),
+        before: x.before,
+        after: x.after,
+        lastModified: x.lastModified.getTime(),
+        deleted: x.deleted,
+        id: x.id,
+    });
+}
+export function deserializeEntry(s) {
+    var x = JSON.parse(s);
+    var time = (typeof x.time == 'number') ? new Date(x.time) : undefined;
+    if (time === undefined)
+        return null;
+    var lastModified = (typeof x.lastModified == 'number')
+        ? new Date(x.lastModified)
+        : now();
+    var before = (typeof x.before == 'string') ? x.before : undefined;
+    var after = (typeof x.after == 'string') ? x.after : undefined;
+    var deleted = (typeof x.deleted == 'boolean') ? x.deleted : false;
+    var id = (typeof x.id == 'string') ? x.id : newUID();
+    return { time: time, lastModified: lastModified, before: before, after: after, deleted: deleted, id: id };
+}
+/* DEPRECATED */
 export function deserializeEntries(s) {
     var e_1, _a;
     var result = [];
