@@ -323,22 +323,20 @@ export async function loadTracker(): Promise<void> {
     }
     const entries = new EntryList(rawEntries)
     let focusedIndex:number|null = null;
-    let focusedEntry:Entry|null = null;
     const entriesToShow = maxEntriesToShow()
     function callback(update:TimeUpdate) {
         const displayUpdates = applyAndSave(entries, update, credentials, renderUpdate)
-        focusedIndex = null
     }
+    function flip(index:number) { return entries.entries.length - 1 - index }
     
     function startInput(startIndex:number): InputBox<Action> {
         //TODO handle gracefully
         const elem = inputWrapperAfterID.get(entries.entries[startIndex].id) as HTMLDivElement
         $('.inputwrapper').empty()
-        focusedIndex = startIndex
+        focusedIndex = flip(startIndex)
         const x = new InputBox(actionRule, {kind: 'raw'}, getDistinctLabels(entries), $(elem))
         const start:Entry = entries.entries[startIndex]
         const end:Entry|null = (startIndex < entries.entries.length - 1) ? entries.entries[startIndex+1] : null
-        focusedEntry = start
         if (end == null) {
             x.bind((a, s) => {
                 switch (a.kind) {
@@ -485,7 +483,7 @@ export async function loadTracker(): Promise<void> {
                 } 
                 break
         }
-        if (focusedEntry != null) startInput(indexOfEntry(focusedEntry)).focus()
+        if (focusedIndex != null) startInput(flip(focusedIndex)).focus()
     }
     function indexOfEntry(entry:Entry): number {
         for (let i = 0; i < entries.entries.length; i++) {
@@ -562,24 +560,15 @@ export async function loadTracker(): Promise<void> {
         $('#inputs').unbind('keydown')
         $('#inputs').bind('keydown', function(e) {
             function focusOnIndex(newIndex:number) {
-                const inputBox = startInput(newIndex)
+                const inputBox = startInput(flip(newIndex))
                 inputBox.focus()
             }
             if (focusedIndex == null) {
-                if (focusedEntry == null) {
-                    focusOnIndex(entries.entries.length-1)
-                } else { 
-                    for (const [i, entry] of enumerate(it(entries.entries))) {
-                        if (entry.id == focusedEntry.id) {
-                            focusedIndex = i
-                        }
-                    }
-                }
-            }
-            if (e.keyCode == 38 && focusedIndex !== null) {
-                focusOnIndex(focusedIndex+1)
-            } else if (e.keyCode == 40 && focusedIndex !== null) {
+                focusOnIndex(0)
+            } else if (e.keyCode == 38) {
                 focusOnIndex(focusedIndex-1)
+            } else if (e.keyCode == 40) {
+                focusOnIndex(focusedIndex+1)
             }
         })
         for (let i = entries.entries.length-1; i >= 0 && i >= entries.entries.length - entriesToShow; i--) {
@@ -1651,7 +1640,6 @@ function applyUpdate(
             for (const du of displayUpdates) display(du)
             break
         case 'delete':
-            debugger;
             const entry = entries.refresh(update.entry)
             upsert({...entry, deleted:true})
             if (update.entry.before !== undefined) {
