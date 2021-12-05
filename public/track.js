@@ -78,7 +78,7 @@ var __spread = (this && this.__spread) || function () {
 };
 import { InputBox } from './suggester.js';
 import { dateRule, parseString, actionRule, emptyRule } from './parse.js';
-import { serializeEntry, serializeEntries, deserializeEntry, deserializeEntries, newUID, makeNewEntry } from './entries.js';
+import { serializeEntries, deserializeEntries, newUID, makeNewEntry } from './entries.js';
 function enumfrom(xs, i, j) {
     var k;
     return __generator(this, function (_a) {
@@ -393,11 +393,11 @@ function parseTime(s, anchor, rel) {
         return 'error';
     return specToDate(m[0], anchor, rel);
 }
-function applyAndSave(entries, update, credentials, displayCallback) {
+function applyAndSave(entries, update, credentials, db, displayCallback) {
     if (displayCallback === void 0) { displayCallback = function () { }; }
     var updates = [];
     applyUpdate(update, entries, updates, displayCallback);
-    saveEntries(updates);
+    saveEntries(updates, db);
     sendUpdates(updates, credentials);
 }
 function div(cls) {
@@ -408,7 +408,7 @@ function div(cls) {
 export function loadTracker() {
     return __awaiter(this, void 0, void 0, function () {
         function callback(update) {
-            var displayUpdates = applyAndSave(entries, update, credentials, renderUpdate);
+            var displayUpdates = applyAndSave(entries, update, credentials, localDB, renderUpdate);
         }
         function flip(index) { return entries.entries.length - 1 - index; }
         function startInput(startIndex) {
@@ -652,10 +652,10 @@ export function loadTracker() {
                     focusOnIndex(0);
                 }
                 else if (e.keyCode == 38) {
-                    focusOnIndex(focusedIndex - 1);
+                    focusOnIndex(Math.max(focusedIndex - 1, 0));
                 }
                 else if (e.keyCode == 40) {
-                    focusOnIndex(focusedIndex + 1);
+                    focusOnIndex(Math.min(entries.entries.length - 1, focusedIndex + 1));
                 }
             });
             for (var i = entries.entries.length - 1; i >= 0 && i >= entries.entries.length - entriesToShow; i--) {
@@ -672,19 +672,22 @@ export function loadTracker() {
                 topElement.append.apply(topElement, __spread(elements));
             startInput(entries.entries.length - 1).focus();
         }
-        var credentials, profile, rawEntries, entries, focusedIndex, entriesToShow, heartbeats, topElement, rangeDivAfterID, bulletDivByID, inputWrapperAfterID;
+        var credentials, localDB, profile, rawEntries, entries, focusedIndex, entriesToShow, heartbeats, topElement, rangeDivAfterID, bulletDivByID, inputWrapperAfterID;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
                 case 1:
                     credentials = _a.sent();
-                    profile = loadProfile();
-                    return [4 /*yield*/, loadEntries(credentials)];
+                    return [4 /*yield*/, openLocalDatabase()];
                 case 2:
+                    localDB = _a.sent();
+                    profile = loadProfile();
+                    return [4 /*yield*/, loadEntries(credentials, localDB)];
+                case 3:
                     rawEntries = _a.sent();
                     if (rawEntries.length == 0) {
                         rawEntries.push(makeNewEntry(now(), undefined, undefined));
-                        saveEntries(rawEntries);
+                        saveEntries(rawEntries, localDB);
                     }
                     entries = new EntryList(rawEntries);
                     focusedIndex = null;
@@ -721,14 +724,17 @@ function emptyProfile() {
 }
 export function loadChart() {
     return __awaiter(this, void 0, void 0, function () {
-        var credentials, entries;
+        var credentials, localDB, entries;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
                 case 1:
                     credentials = _a.sent();
-                    return [4 /*yield*/, loadEntries(credentials)];
+                    return [4 /*yield*/, openLocalDatabase()];
                 case 2:
+                    localDB = _a.sent();
+                    return [4 /*yield*/, loadEntries(credentials, localDB)];
+                case 3:
                     entries = _a.sent();
                     renderChartFromEntries(entries, loadProfile());
                     return [2 /*return*/];
@@ -897,14 +903,17 @@ function renderBars(entries, buckets, profile) {
 }
 export function loadBars() {
     return __awaiter(this, void 0, void 0, function () {
-        var credentials, entries, buckets;
+        var credentials, localDB, entries, buckets;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
                 case 1:
                     credentials = _a.sent();
-                    return [4 /*yield*/, loadEntries(credentials)];
+                    return [4 /*yield*/, openLocalDatabase()];
                 case 2:
+                    localDB = _a.sent();
+                    return [4 /*yield*/, loadEntries(credentials, localDB)];
+                case 3:
                     entries = _a.sent();
                     buckets = weeklyBuckets();
                     renderBars(entries, buckets, loadProfile());
@@ -1122,21 +1131,104 @@ function renderTime(date) {
 }
 var entryPrefix = 'entry/';
 var entryPrefixLength = entryPrefix.length;
-function saveEntries(changedEntries) {
-    var e_18, _a;
-    try {
-        for (var changedEntries_1 = __values(changedEntries), changedEntries_1_1 = changedEntries_1.next(); !changedEntries_1_1.done; changedEntries_1_1 = changedEntries_1.next()) {
-            var entry = changedEntries_1_1.value;
-            localStorage.setItem("" + entryPrefix + entry.id, serializeEntry(entry));
-        }
+/*
+Old implementation
+function saveEntries(changedEntries:Entry[]) {
+    for (const entry of changedEntries) {
+        localStorage.setItem(`${entryPrefix}${entry.id}`, serializeEntry(entry))
     }
-    catch (e_18_1) { e_18 = { error: e_18_1 }; }
-    finally {
-        try {
-            if (changedEntries_1_1 && !changedEntries_1_1.done && (_a = changedEntries_1.return)) _a.call(changedEntries_1);
+}
+*/
+function openLocalDatabase() {
+    var request = window.indexedDB.open('timetrack', 1);
+    return new Promise(function (resolve) {
+        request.onupgradeneeded = function (event) {
+            var db = event.target.result;
+            var objectStore = db.createObjectStore("entries", { keyPath: 'id' });
+        };
+        request.onsuccess = function (event) {
+            var db = event.target.result;
+            resolve(db);
+        };
+    });
+}
+function saveEntries(changedEntries, db) {
+    return __awaiter(this, void 0, void 0, function () {
+        var transaction, entryStore, changedEntries_1, changedEntries_1_1, entry;
+        var e_18, _a;
+        return __generator(this, function (_b) {
+            transaction = db.transaction(["entries"], "readwrite");
+            entryStore = transaction.objectStore('entries');
+            try {
+                for (changedEntries_1 = __values(changedEntries), changedEntries_1_1 = changedEntries_1.next(); !changedEntries_1_1.done; changedEntries_1_1 = changedEntries_1.next()) {
+                    entry = changedEntries_1_1.value;
+                    entryStore.put(entry);
+                }
+            }
+            catch (e_18_1) { e_18 = { error: e_18_1 }; }
+            finally {
+                try {
+                    if (changedEntries_1_1 && !changedEntries_1_1.done && (_a = changedEntries_1.return)) _a.call(changedEntries_1);
+                }
+                finally { if (e_18) throw e_18.error; }
+            }
+            return [2 /*return*/, new Promise(function (resolve) {
+                    transaction.oncomplete = function () { resolve(); };
+                })];
+        });
+    });
+}
+/* code left in as reminder of how to iterate through database
+async function getLocalEntries(db:IDBDatabase): Promise<Entry[]> {
+    return new Promise(resolve => {
+        const result:Entry[] = []
+        const entryStore = db.transaction(["entries"]).objectStore("entries")
+        entryStore.openCursor().onsuccess = function(event:any) {
+            const cursor:IDBCursorWithValue = event.target.result
+            if (cursor) {
+                result.push(cursor.value)
+            } else {
+                resolve(result)
+            }
         }
-        finally { if (e_18) throw e_18.error; }
-    }
+    })
+}
+*/
+function getLocalEntriesNoMigration(db) {
+    return __awaiter(this, void 0, void 0, function () {
+        return __generator(this, function (_a) {
+            return [2 /*return*/, new Promise(function (resolve) {
+                    var entryStore = db.transaction("entries").objectStore("entries");
+                    entryStore.getAll().onsuccess = function (event) {
+                        resolve(event.target.result);
+                    };
+                })];
+        });
+    });
+}
+function getLocalEntries(db) {
+    return __awaiter(this, void 0, void 0, function () {
+        var result, s, entries;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, getLocalEntriesNoMigration(db)];
+                case 1:
+                    result = _a.sent();
+                    if (result.length == 0)
+                        return [2 /*return*/, result];
+                    s = localStorage.getItem('entries');
+                    if (!(s != null)) return [3 /*break*/, 3];
+                    entries = deserializeEntries(s);
+                    return [4 /*yield*/, saveEntries(entries, db)];
+                case 2:
+                    _a.sent();
+                    return [2 /*return*/, entries];
+                case 3:
+                    window.alert("Not yet implemented, sorry! (might not work for new users)");
+                    return [2 /*return*/, []];
+            }
+        });
+    });
 }
 function timeToDateSpecString(date) {
     var now = convertDate(new Date());
@@ -1157,49 +1249,41 @@ function timeToDateSpecString(date) {
     var prefix = isMidnight ? 'start' : renderAMPM(myDate) + ",";
     return renderYear(myDate, prefix);
 }
-export function getLocalEntries() {
-    var e_19, _a;
-    var result = [];
-    try {
-        for (var _b = __values(Object.entries(localStorage)), _c = _b.next(); !_c.done; _c = _b.next()) {
-            var _d = __read(_c.value, 2), key = _d[0], value = _d[1];
-            if (key.substr(0, entryPrefixLength) == entryPrefix) {
-                var entry = deserializeEntry(value);
-                if (entry != null)
-                    result.push(entry);
-            }
+/*
+Old implementation
+export function getLocalEntries(): Entry[] {
+    const result:Entry[] = []
+    for (const [key, value] of Object.entries(localStorage)) {
+        if (key.substr(0, entryPrefixLength) == entryPrefix) {
+            const entry:Entry|null = deserializeEntry(value)
+            if (entry != null) result.push(entry)
         }
-    }
-    catch (e_19_1) { e_19 = { error: e_19_1 }; }
-    finally {
-        try {
-            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
-        }
-        finally { if (e_19) throw e_19.error; }
     }
     if (result.length == 0) {
-        var s = localStorage.getItem('entries');
+        const s = localStorage.getItem('entries')
         if (s != null) {
-            var entries = deserializeEntries(s);
-            saveEntries(entries);
-            window.alert("Migrated local storage to new format. Refresh the page.");
+            const entries = deserializeEntries(s)
+            saveEntries(entries)
+            window.alert("Migrated local storage to new format. Refresh the page.")
         }
     }
-    return result;
+    return result
 }
-function loadEntries(credentials) {
+*/
+function loadEntries(credentials, localDB) {
     return __awaiter(this, void 0, void 0, function () {
         var localEntries, remoteEntries, merge;
         return __generator(this, function (_a) {
             switch (_a.label) {
-                case 0:
-                    localEntries = getLocalEntries();
-                    return [4 /*yield*/, getRemoteEntries(credentials)];
+                case 0: return [4 /*yield*/, getLocalEntries(localDB)];
                 case 1:
+                    localEntries = _a.sent();
+                    return [4 /*yield*/, getRemoteEntries(credentials)];
+                case 2:
                     remoteEntries = _a.sent();
                     merge = mergeAndUpdate(localEntries, remoteEntries);
                     sendUpdates(merge.yUpdates, credentials);
-                    saveEntries(merge.xUpdates);
+                    saveEntries(merge.xUpdates, localDB);
                     return [2 /*return*/, merge.merged];
             }
         });
@@ -1236,7 +1320,7 @@ function minutesAfter(a, n) {
     return result;
 }
 function applyToTriples(f, xs) {
-    var e_20, _a;
+    var e_19, _a;
     var a = undefined;
     var b = undefined;
     var c = undefined;
@@ -1257,12 +1341,12 @@ function applyToTriples(f, xs) {
             }
         }
     }
-    catch (e_20_1) { e_20 = { error: e_20_1 }; }
+    catch (e_19_1) { e_19 = { error: e_19_1 }; }
     finally {
         try {
             if (xs_1_1 && !xs_1_1.done && (_a = xs_1.return)) _a.call(xs_1);
         }
-        finally { if (e_20) throw e_20.error; }
+        finally { if (e_19) throw e_19.error; }
     }
     addIf(xs[xs.length - 2], xs[xs.length - 1], undefined);
     return result;
@@ -1302,7 +1386,7 @@ function spansFromEntries(entries) {
 }
 // assumes that entries are sorted
 function spansInRange(start, end, entries) {
-    var e_21, _a;
+    var e_20, _a;
     function clip(span) {
         if (span.start.time < start && span.end.time < start) {
             return null;
@@ -1322,12 +1406,12 @@ function spansInRange(start, end, entries) {
                 result.push(span);
         }
     }
-    catch (e_21_1) { e_21 = { error: e_21_1 }; }
+    catch (e_20_1) { e_20 = { error: e_20_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_21) throw e_21.error; }
+        finally { if (e_20) throw e_20.error; }
     }
     return result;
 }
@@ -1361,30 +1445,33 @@ function loadProfile() {
 }
 export function loadLabels() {
     return __awaiter(this, void 0, void 0, function () {
-        var credentials, entries;
+        var credentials, localDB, entries;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
                 case 1:
                     credentials = _a.sent();
-                    return [4 /*yield*/, loadEntries(credentials)];
+                    return [4 /*yield*/, openLocalDatabase()];
                 case 2:
+                    localDB = _a.sent();
+                    return [4 /*yield*/, loadEntries(credentials, localDB)];
+                case 3:
                     entries = _a.sent();
-                    showLabels(new EntryList(entries), credentials);
+                    showLabels(new EntryList(entries), credentials, localDB);
                     $('#labels').click(hideLabelPopup);
                     return [2 /*return*/];
             }
         });
     });
 }
-function showLabels(entries, credentials) {
-    var e_22, _a;
+function showLabels(entries, credentials, localDB) {
+    var e_21, _a;
     var labels = getDistinctLabels(entries);
     var profile = loadProfile();
     labels.sort();
     function callback(update) {
-        applyAndSave(entries, update, credentials);
-        showLabels(entries, credentials);
+        applyAndSave(entries, update, credentials, localDB);
+        showLabels(entries, credentials, localDB);
     }
     function makeLabelDiv(label) {
         var colorHex = colorToHex(getColor(label, profile));
@@ -1411,20 +1498,20 @@ function showLabels(entries, credentials) {
             main.append(makeLabelDiv(label));
         }
     }
-    catch (e_22_1) { e_22 = { error: e_22_1 }; }
+    catch (e_21_1) { e_21 = { error: e_21_1 }; }
     finally {
         try {
             if (labels_1_1 && !labels_1_1.done && (_a = labels_1.return)) _a.call(labels_1);
         }
-        finally { if (e_22) throw e_22.error; }
+        finally { if (e_21) throw e_21.error; }
     }
 }
 export function loadCalendar() {
     return __awaiter(this, void 0, void 0, function () {
         function callback(update) {
-            applyAndSave(entries, update, credentials);
+            applyAndSave(entries, update, credentials, localDB);
         }
-        var credentials, entries, _a;
+        var credentials, localDB, entries, _a;
         return __generator(this, function (_b) {
             switch (_b.label) {
                 case 0:
@@ -1434,9 +1521,12 @@ export function loadCalendar() {
                     return [4 /*yield*/, getCredentials()];
                 case 1:
                     credentials = _b.sent();
-                    _a = EntryList.bind;
-                    return [4 /*yield*/, loadEntries(credentials)];
+                    return [4 /*yield*/, openLocalDatabase()];
                 case 2:
+                    localDB = _b.sent();
+                    _a = EntryList.bind;
+                    return [4 /*yield*/, loadEntries(credentials, localDB)];
+                case 3:
                     entries = new (_a.apply(EntryList, [void 0, _b.sent()]))();
                     showCalendar(entries, null, loadProfile(), callback);
                     return [2 /*return*/];
@@ -1451,7 +1541,7 @@ function sortAndFilter(entries) {
 }
 //TODO less sort and filter...
 function showCalendar(entries, initialPopup, profile, callback) {
-    var e_23, _a, e_24, _b;
+    var e_22, _a, e_23, _b;
     var days = [];
     for (var i = 0; i < 7; i++) {
         var d = daysAgo(6 - i);
@@ -1476,35 +1566,35 @@ function showCalendar(entries, initialPopup, profile, callback) {
             getCalendarColumn(day.index).empty();
         }
     }
-    catch (e_23_1) { e_23 = { error: e_23_1 }; }
+    catch (e_22_1) { e_22 = { error: e_22_1 }; }
     finally {
         try {
             if (days_1_1 && !days_1_1.done && (_a = days_1.return)) _a.call(days_1);
         }
-        finally { if (e_23) throw e_23.error; }
+        finally { if (e_22) throw e_22.error; }
     }
     var _loop_3 = function (start, end) {
-        var e_25, _a;
+        var e_24, _a;
         try {
-            for (var days_2 = (e_25 = void 0, __values(days)), days_2_1 = days_2.next(); !days_2_1.done; days_2_1 = days_2.next()) {
+            for (var days_2 = (e_24 = void 0, __values(days)), days_2_1 = days_2.next(); !days_2_1.done; days_2_1 = days_2.next()) {
                 var day = days_2_1.value;
                 var range = partInDay(start.time, end.time, day);
                 if (range !== null) {
-                    var e_26 = calendarSpan(labelFrom(start, end), range.start, range.end, day.start, day.end, profile);
-                    e_26.click(function (e) {
+                    var e_25 = calendarSpan(labelFrom(start, end), range.start, range.end, day.start, day.end, profile);
+                    e_25.click(function (e) {
                         popup(start.id, end.id);
                         e.stopPropagation();
                     });
-                    getCalendarColumn(day.index).append(e_26);
+                    getCalendarColumn(day.index).append(e_25);
                 }
             }
         }
-        catch (e_25_1) { e_25 = { error: e_25_1 }; }
+        catch (e_24_1) { e_24 = { error: e_24_1 }; }
         finally {
             try {
                 if (days_2_1 && !days_2_1.done && (_a = days_2.return)) _a.call(days_2);
             }
-            finally { if (e_25) throw e_25.error; }
+            finally { if (e_24) throw e_24.error; }
         }
     };
     try {
@@ -1513,12 +1603,12 @@ function showCalendar(entries, initialPopup, profile, callback) {
             _loop_3(start, end);
         }
     }
-    catch (e_24_1) { e_24 = { error: e_24_1 }; }
+    catch (e_23_1) { e_23 = { error: e_23_1 }; }
     finally {
         try {
             if (_d && !_d.done && (_b = _c.return)) _b.call(_c);
         }
-        finally { if (e_24) throw e_24.error; }
+        finally { if (e_23) throw e_23.error; }
     }
     if (initialPopup != null)
         popup(initialPopup[0], initialPopup[1]);
@@ -1540,7 +1630,7 @@ function group(name, view) {
     return start + "/" + group(rest, v.expand);
 }
 function oldSerializeProfile(profile) {
-    var e_27, _a;
+    var e_26, _a;
     var parts = [];
     try {
         for (var _b = __values(profile.colors.entries()), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -1548,12 +1638,12 @@ function oldSerializeProfile(profile) {
             parts.push(label + "," + colorToHex(color));
         }
     }
-    catch (e_27_1) { e_27 = { error: e_27_1 }; }
+    catch (e_26_1) { e_26 = { error: e_26_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_27) throw e_27.error; }
+        finally { if (e_26) throw e_26.error; }
     }
     return parts.join(';');
 }
@@ -1565,7 +1655,7 @@ function newSerializeProfile(profile) {
     return JSON.stringify(serializable);
 }
 function newDeserializeProfile(s) {
-    var e_28, _a, e_29, _b;
+    var e_27, _a, e_28, _b;
     try {
         var json = JSON.parse(s);
         var result = emptyProfile();
@@ -1581,12 +1671,12 @@ function newDeserializeProfile(s) {
                 result.colors.set(x[0], colorFromHex(x[1]));
             }
         }
-        catch (e_28_1) { e_28 = { error: e_28_1 }; }
+        catch (e_27_1) { e_27 = { error: e_27_1 }; }
         finally {
             try {
                 if (colors_1_1 && !colors_1_1.done && (_a = colors_1.return)) _a.call(colors_1);
             }
-            finally { if (e_28) throw e_28.error; }
+            finally { if (e_27) throw e_27.error; }
         }
         var expanded = json.expanded;
         if (!Array.isArray(expanded))
@@ -1599,12 +1689,12 @@ function newDeserializeProfile(s) {
                 result.expanded.add(x);
             }
         }
-        catch (e_29_1) { e_29 = { error: e_29_1 }; }
+        catch (e_28_1) { e_28 = { error: e_28_1 }; }
         finally {
             try {
                 if (expanded_1_1 && !expanded_1_1.done && (_b = expanded_1.return)) _b.call(expanded_1);
             }
-            finally { if (e_29) throw e_29.error; }
+            finally { if (e_28) throw e_28.error; }
         }
         return result;
     }
@@ -1614,7 +1704,7 @@ function newDeserializeProfile(s) {
     }
 }
 function oldDeserializeProfile(s) {
-    var e_30, _a;
+    var e_29, _a;
     var result = emptyProfile();
     try {
         for (var _b = __values(s.split(';')), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -1625,12 +1715,12 @@ function oldDeserializeProfile(s) {
             }
         }
     }
-    catch (e_30_1) { e_30 = { error: e_30_1 }; }
+    catch (e_29_1) { e_29 = { error: e_29_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_30) throw e_30.error; }
+        finally { if (e_29) throw e_29.error; }
     }
     return result;
 }
@@ -1767,7 +1857,7 @@ function insertAt(toInsert, xs, index) {
 }
 //TODO: could be better
 function neighbors(entries, entry) {
-    var e_31, _a;
+    var e_30, _a;
     var before = null;
     var after = null;
     try {
@@ -1785,12 +1875,12 @@ function neighbors(entries, entry) {
             }
         }
     }
-    catch (e_31_1) { e_31 = { error: e_31_1 }; }
+    catch (e_30_1) { e_30 = { error: e_30_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_31) throw e_31.error; }
+        finally { if (e_30) throw e_30.error; }
     }
     return [before, after];
 }
@@ -1816,7 +1906,7 @@ function maxEntriesToShow() {
     return n;
 }
 function bulkUpsertInPlace(upserts, entries) {
-    var e_32, _a, e_33, _b;
+    var e_31, _a, e_32, _b;
     var byId = new Map();
     try {
         for (var upserts_1 = __values(upserts), upserts_1_1 = upserts_1.next(); !upserts_1_1.done; upserts_1_1 = upserts_1.next()) {
@@ -1824,12 +1914,12 @@ function bulkUpsertInPlace(upserts, entries) {
             byId.set(upsert.id, upsert);
         }
     }
-    catch (e_32_1) { e_32 = { error: e_32_1 }; }
+    catch (e_31_1) { e_31 = { error: e_31_1 }; }
     finally {
         try {
             if (upserts_1_1 && !upserts_1_1.done && (_a = upserts_1.return)) _a.call(upserts_1);
         }
-        finally { if (e_32) throw e_32.error; }
+        finally { if (e_31) throw e_31.error; }
     }
     for (var i = 0; i < entries.length; i++) {
         var upsert = byId.get(entries[i].id);
@@ -1844,17 +1934,17 @@ function bulkUpsertInPlace(upserts, entries) {
             entries.push(upsert);
         }
     }
-    catch (e_33_1) { e_33 = { error: e_33_1 }; }
+    catch (e_32_1) { e_32 = { error: e_32_1 }; }
     finally {
         try {
             if (_d && !_d.done && (_b = _c.return)) _b.call(_c);
         }
-        finally { if (e_33) throw e_33.error; }
+        finally { if (e_32) throw e_32.error; }
     }
 }
 var EntryList = /** @class */ (function () {
     function EntryList(entries) {
-        var e_34, _a;
+        var e_33, _a;
         this.byID = new Map();
         this.entries = sortAndFilter(entries);
         try {
@@ -1863,12 +1953,12 @@ var EntryList = /** @class */ (function () {
                 this.byID.set(entry.id, entry);
             }
         }
-        catch (e_34_1) { e_34 = { error: e_34_1 }; }
+        catch (e_33_1) { e_33 = { error: e_33_1 }; }
         finally {
             try {
                 if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
             }
-            finally { if (e_34) throw e_34.error; }
+            finally { if (e_33) throw e_33.error; }
         }
     }
     EntryList.prototype.delete = function (entry) {
@@ -1901,7 +1991,7 @@ var EntryList = /** @class */ (function () {
 //Also updates in place
 //Also inserts displayupdates into the list so that we can update tracker display
 function applyUpdate(update, entries, updatedEntries, displayCallback) {
-    var e_35, _a, e_36, _b, e_37, _c;
+    var e_34, _a, e_35, _b, e_36, _c;
     if (displayCallback === void 0) { displayCallback = function () { }; }
     function upsert(entry) {
         var newEntry = __assign(__assign({}, entry), { lastModified: now() });
@@ -1909,7 +1999,7 @@ function applyUpdate(update, entries, updatedEntries, displayCallback) {
         upsertInPlace(newEntry, updatedEntries);
     }
     function bulkUpsert(upserts) {
-        var e_38, _a;
+        var e_37, _a;
         var newEntries = upserts.map(function (entry) { return (__assign(__assign({}, entry), { lastModified: now() })); });
         try {
             for (var newEntries_1 = __values(newEntries), newEntries_1_1 = newEntries_1.next(); !newEntries_1_1.done; newEntries_1_1 = newEntries_1.next()) {
@@ -1917,12 +2007,12 @@ function applyUpdate(update, entries, updatedEntries, displayCallback) {
                 entries.upsert(entry);
             }
         }
-        catch (e_38_1) { e_38 = { error: e_38_1 }; }
+        catch (e_37_1) { e_37 = { error: e_37_1 }; }
         finally {
             try {
                 if (newEntries_1_1 && !newEntries_1_1.done && (_a = newEntries_1.return)) _a.call(newEntries_1);
             }
-            finally { if (e_38) throw e_38.error; }
+            finally { if (e_37) throw e_37.error; }
         }
         bulkUpsertInPlace(newEntries, updatedEntries);
     }
@@ -1937,12 +2027,12 @@ function applyUpdate(update, entries, updatedEntries, displayCallback) {
                     applyUpdate(u, entries, updatedEntries, displayCallback);
                 }
             }
-            catch (e_35_1) { e_35 = { error: e_35_1 }; }
+            catch (e_34_1) { e_34 = { error: e_34_1 }; }
             finally {
                 try {
                     if (_e && !_e.done && (_a = _d.return)) _a.call(_d);
                 }
-                finally { if (e_35) throw e_35.error; }
+                finally { if (e_34) throw e_34.error; }
             }
             break;
         case 'relabel':
@@ -2023,12 +2113,12 @@ function applyUpdate(update, entries, updatedEntries, displayCallback) {
                         upserts.push(newEntry_3);
                 }
             }
-            catch (e_36_1) { e_36 = { error: e_36_1 }; }
+            catch (e_35_1) { e_35 = { error: e_35_1 }; }
             finally {
                 try {
                     if (_j && !_j.done && (_b = _h.return)) _b.call(_h);
                 }
-                finally { if (e_36) throw e_36.error; }
+                finally { if (e_35) throw e_35.error; }
             }
             bulkUpsert(upserts);
             try {
@@ -2037,12 +2127,12 @@ function applyUpdate(update, entries, updatedEntries, displayCallback) {
                     display(du);
                 }
             }
-            catch (e_37_1) { e_37 = { error: e_37_1 }; }
+            catch (e_36_1) { e_36 = { error: e_36_1 }; }
             finally {
                 try {
                     if (displayUpdates_1_1 && !displayUpdates_1_1.done && (_c = displayUpdates_1.return)) _c.call(displayUpdates_1);
                 }
-                finally { if (e_37) throw e_37.error; }
+                finally { if (e_36) throw e_36.error; }
             }
             break;
         case 'delete':
@@ -2092,8 +2182,8 @@ function remapLabel(label, from, to, moveChildren) {
     }
 }
 function listPairsAndEnds(xs) {
-    var a, b, xs_2, xs_2_1, x, e_39_1;
-    var e_39, _a;
+    var a, b, xs_2, xs_2_1, x, e_38_1;
+    var e_38, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -2118,14 +2208,14 @@ function listPairsAndEnds(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_39_1 = _b.sent();
-                e_39 = { error: e_39_1 };
+                e_38_1 = _b.sent();
+                e_38 = { error: e_38_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_2_1 && !xs_2_1.done && (_a = xs_2.return)) _a.call(xs_2);
                 }
-                finally { if (e_39) throw e_39.error; }
+                finally { if (e_38) throw e_38.error; }
                 return [7 /*endfinally*/];
             case 8:
                 if (!(b != null)) return [3 /*break*/, 10];
@@ -2138,8 +2228,8 @@ function listPairsAndEnds(xs) {
     });
 }
 function listPairs(xs) {
-    var _a, _b, _c, x, y, e_40_1;
-    var e_40, _d;
+    var _a, _b, _c, x, y, e_39_1;
+    var e_39, _d;
     return __generator(this, function (_e) {
         switch (_e.label) {
             case 0:
@@ -2159,22 +2249,22 @@ function listPairs(xs) {
                 return [3 /*break*/, 1];
             case 4: return [3 /*break*/, 7];
             case 5:
-                e_40_1 = _e.sent();
-                e_40 = { error: e_40_1 };
+                e_39_1 = _e.sent();
+                e_39 = { error: e_39_1 };
                 return [3 /*break*/, 7];
             case 6:
                 try {
                     if (_b && !_b.done && (_d = _a.return)) _d.call(_a);
                 }
-                finally { if (e_40) throw e_40.error; }
+                finally { if (e_39) throw e_39.error; }
                 return [7 /*endfinally*/];
             case 7: return [2 /*return*/];
         }
     });
 }
 function enumerate(xs) {
-    var i, xs_3, xs_3_1, x, e_41_1;
-    var e_41, _a;
+    var i, xs_3, xs_3_1, x, e_40_1;
+    var e_40, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -2197,14 +2287,14 @@ function enumerate(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_41_1 = _b.sent();
-                e_41 = { error: e_41_1 };
+                e_40_1 = _b.sent();
+                e_40 = { error: e_40_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_3_1 && !xs_3_1.done && (_a = xs_3.return)) _a.call(xs_3);
                 }
-                finally { if (e_41) throw e_41.error; }
+                finally { if (e_40) throw e_40.error; }
                 return [7 /*endfinally*/];
             case 8: return [2 /*return*/];
         }
@@ -2253,8 +2343,8 @@ function revit(xs, limit) {
 }
 //Returns the same set of elements, but with booleans flagging first and last
 function markTails(xs) {
-    var first, next, start, xs_4, xs_4_1, x, e_42_1;
-    var e_42, _a;
+    var first, next, start, xs_4, xs_4_1, x, e_41_1;
+    var e_41, _a;
     return __generator(this, function (_b) {
         switch (_b.label) {
             case 0:
@@ -2285,14 +2375,14 @@ function markTails(xs) {
                 return [3 /*break*/, 2];
             case 5: return [3 /*break*/, 8];
             case 6:
-                e_42_1 = _b.sent();
-                e_42 = { error: e_42_1 };
+                e_41_1 = _b.sent();
+                e_41 = { error: e_41_1 };
                 return [3 /*break*/, 8];
             case 7:
                 try {
                     if (xs_4_1 && !xs_4_1.done && (_a = xs_4.return)) _a.call(xs_4);
                 }
-                finally { if (e_42) throw e_42.error; }
+                finally { if (e_41) throw e_41.error; }
                 return [7 /*endfinally*/];
             case 8: return [4 /*yield*/, [first, true, next]];
             case 9:
@@ -2464,9 +2554,9 @@ function hash(s) {
 //Gives the merged list of updates, as well as updates that you'd have to apply to either side
 //to bring it up to merged
 export function mergeAndUpdate(xs, ys) {
-    var e_43, _a, e_44, _b;
+    var e_42, _a, e_43, _b;
     function makeMap(entries) {
-        var e_45, _a;
+        var e_44, _a;
         var result = new Map();
         try {
             for (var entries_1 = __values(entries), entries_1_1 = entries_1.next(); !entries_1_1.done; entries_1_1 = entries_1.next()) {
@@ -2474,12 +2564,12 @@ export function mergeAndUpdate(xs, ys) {
                 result.set(entry.id, entry);
             }
         }
-        catch (e_45_1) { e_45 = { error: e_45_1 }; }
+        catch (e_44_1) { e_44 = { error: e_44_1 }; }
         finally {
             try {
                 if (entries_1_1 && !entries_1_1.done && (_a = entries_1.return)) _a.call(entries_1);
             }
-            finally { if (e_45) throw e_45.error; }
+            finally { if (e_44) throw e_44.error; }
         }
         return result;
     }
@@ -2501,12 +2591,12 @@ export function mergeAndUpdate(xs, ys) {
             }
         }
     }
-    catch (e_43_1) { e_43 = { error: e_43_1 }; }
+    catch (e_42_1) { e_42 = { error: e_42_1 }; }
     finally {
         try {
             if (xs_5_1 && !xs_5_1.done && (_a = xs_5.return)) _a.call(xs_5);
         }
-        finally { if (e_43) throw e_43.error; }
+        finally { if (e_42) throw e_42.error; }
     }
     try {
         for (var ys_1 = __values(ys), ys_1_1 = ys_1.next(); !ys_1_1.done; ys_1_1 = ys_1.next()) {
@@ -2518,12 +2608,12 @@ export function mergeAndUpdate(xs, ys) {
             }
         }
     }
-    catch (e_44_1) { e_44 = { error: e_44_1 }; }
+    catch (e_43_1) { e_43 = { error: e_43_1 }; }
     finally {
         try {
             if (ys_1_1 && !ys_1_1.done && (_b = ys_1.return)) _b.call(ys_1);
         }
-        finally { if (e_44) throw e_44.error; }
+        finally { if (e_43) throw e_43.error; }
     }
     return { merged: merged, xUpdates: xUpdates, yUpdates: yUpdates };
 }
@@ -2576,7 +2666,7 @@ function matchLabel(category, label) {
         return null;
 }
 function makeReport(entries, start, end, topLabels) {
-    var e_46, _a, e_47, _b;
+    var e_45, _a, e_46, _b;
     entries = sortAndFilter(entries);
     var result = {};
     var total = 0;
@@ -2590,34 +2680,34 @@ function makeReport(entries, start, end, topLabels) {
                 var dt = t1.getTime() - t0.getTime();
                 total += dt;
                 try {
-                    for (var topLabels_1 = (e_47 = void 0, __values(topLabels)), topLabels_1_1 = topLabels_1.next(); !topLabels_1_1.done; topLabels_1_1 = topLabels_1.next()) {
+                    for (var topLabels_1 = (e_46 = void 0, __values(topLabels)), topLabels_1_1 = topLabels_1.next(); !topLabels_1_1.done; topLabels_1_1 = topLabels_1.next()) {
                         var topLabel = topLabels_1_1.value;
                         var subLabel = matchLabel(topLabel, label);
                         if (t0 != t1 && subLabel != null)
                             addToReport(subLabel, dt, result);
                     }
                 }
-                catch (e_47_1) { e_47 = { error: e_47_1 }; }
+                catch (e_46_1) { e_46 = { error: e_46_1 }; }
                 finally {
                     try {
                         if (topLabels_1_1 && !topLabels_1_1.done && (_b = topLabels_1.return)) _b.call(topLabels_1);
                     }
-                    finally { if (e_47) throw e_47.error; }
+                    finally { if (e_46) throw e_46.error; }
                 }
             }
         }
     }
-    catch (e_46_1) { e_46 = { error: e_46_1 }; }
+    catch (e_45_1) { e_45 = { error: e_45_1 }; }
     finally {
         try {
             if (_d && !_d.done && (_a = _c.return)) _a.call(_c);
         }
-        finally { if (e_46) throw e_46.error; }
+        finally { if (e_45) throw e_45.error; }
     }
     return [result, total];
 }
 function reportToString(report) {
-    var e_48, _a;
+    var e_47, _a;
     var parts = [];
     try {
         for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -2625,12 +2715,12 @@ function reportToString(report) {
             parts.push(label + ":" + time + ":" + reportToString(sub));
         }
     }
-    catch (e_48_1) { e_48 = { error: e_48_1 }; }
+    catch (e_47_1) { e_47 = { error: e_47_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_48) throw e_48.error; }
+        finally { if (e_47) throw e_47.error; }
     }
     return "{" + parts.join(',') + "}";
 }
@@ -2638,7 +2728,7 @@ function serializeReport(report) {
     return JSON.stringify(report);
 }
 function purifyReport(impure) {
-    var e_49, _a;
+    var e_48, _a;
     var result = {};
     try {
         for (var _b = __values(Object.entries(impure)), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -2657,12 +2747,12 @@ function purifyReport(impure) {
             }
         }
     }
-    catch (e_49_1) { e_49 = { error: e_49_1 }; }
+    catch (e_48_1) { e_48 = { error: e_48_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_49) throw e_49.error; }
+        finally { if (e_48) throw e_48.error; }
     }
     return result;
 }
@@ -2674,7 +2764,7 @@ function len(x) {
     return Object.keys(x).length;
 }
 function total(x) {
-    var e_50, _a;
+    var e_49, _a;
     var result = 0;
     try {
         for (var _b = __values(Object.values(x)), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -2682,18 +2772,18 @@ function total(x) {
             result += t;
         }
     }
-    catch (e_50_1) { e_50 = { error: e_50_1 }; }
+    catch (e_49_1) { e_49 = { error: e_49_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_50) throw e_50.error; }
+        finally { if (e_49) throw e_49.error; }
     }
     return result;
 }
 // Compress paths (with no branches) into single steps
 export function flattenReport(report) {
-    var e_51, _a;
+    var e_50, _a;
     var entries = Object.entries(report);
     var result = {};
     try {
@@ -2709,12 +2799,12 @@ export function flattenReport(report) {
             }
         }
     }
-    catch (e_51_1) { e_51 = { error: e_51_1 }; }
+    catch (e_50_1) { e_50 = { error: e_50_1 }; }
     finally {
         try {
             if (entries_2_1 && !entries_2_1.done && (_a = entries_2.return)) _a.call(entries_2);
         }
-        finally { if (e_51) throw e_51.error; }
+        finally { if (e_50) throw e_50.error; }
     }
     return result;
 }
@@ -2729,7 +2819,7 @@ function capReport(report) {
     return result;
 }
 function totalReportTime(report) {
-    var e_52, _a;
+    var e_51, _a;
     var result = 0;
     try {
         for (var _b = __values(Object.entries(report)), _c = _b.next(); !_c.done; _c = _b.next()) {
@@ -2737,12 +2827,12 @@ function totalReportTime(report) {
             result += time;
         }
     }
-    catch (e_52_1) { e_52 = { error: e_52_1 }; }
+    catch (e_51_1) { e_51 = { error: e_51_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_52) throw e_52.error; }
+        finally { if (e_51) throw e_51.error; }
     }
     return result;
 }
@@ -2798,9 +2888,9 @@ function renderReportLine(label, timeString, onClick, onShiftClick, hasChildren,
     return result;
     //return $(`<div class="reportLine"><span>${label}</span><span>${renderDuration(time)}</span><span>${renderPercentage(fraction)}</span></div>`)
 }
-function makeEditParams(entries, credentials) {
+function makeEditParams(entries, credentials, localDB) {
     function callback(update) {
-        applyAndSave(entries, update, credentials);
+        applyAndSave(entries, update, credentials, localDB);
     }
     return { callback: callback, entries: entries, redraw: function () { } };
 }
@@ -2827,7 +2917,7 @@ function displayReportTime(time, total, display, totalInReport) {
 }
 function renderReport(report, timeDisplay, total, // this is the total including items not in the report
 profile, editParams, indentation, reportTotal, expanded, prefix) {
-    var e_53, _a, e_54, _b;
+    var e_52, _a, e_53, _b;
     if (editParams === void 0) { editParams = null; }
     if (indentation === void 0) { indentation = 0; }
     if (reportTotal === void 0) { reportTotal = totalReportTime(report); }
@@ -2873,42 +2963,42 @@ profile, editParams, indentation, reportTotal, expanded, prefix) {
             var _c = __read(entries_3_1.value, 2), label = _c[0], _d = __read(_c[1], 2), time = _d[0], sub = _d[1];
             var _e = __read(renderLineAndChildren(label, time, sub), 2), elements = _e[0], expandChildren = _e[1];
             try {
-                for (var elements_1 = (e_54 = void 0, __values(elements)), elements_1_1 = elements_1.next(); !elements_1_1.done; elements_1_1 = elements_1.next()) {
-                    var e_55 = elements_1_1.value;
-                    result.append(e_55);
+                for (var elements_1 = (e_53 = void 0, __values(elements)), elements_1_1 = elements_1.next(); !elements_1_1.done; elements_1_1 = elements_1.next()) {
+                    var e_54 = elements_1_1.value;
+                    result.append(e_54);
                 }
             }
-            catch (e_54_1) { e_54 = { error: e_54_1 }; }
+            catch (e_53_1) { e_53 = { error: e_53_1 }; }
             finally {
                 try {
                     if (elements_1_1 && !elements_1_1.done && (_b = elements_1.return)) _b.call(elements_1);
                 }
-                finally { if (e_54) throw e_54.error; }
+                finally { if (e_53) throw e_53.error; }
             }
             childExpanders.push(expandChildren);
         }
     }
-    catch (e_53_1) { e_53 = { error: e_53_1 }; }
+    catch (e_52_1) { e_52 = { error: e_52_1 }; }
     finally {
         try {
             if (entries_3_1 && !entries_3_1.done && (_a = entries_3.return)) _a.call(entries_3);
         }
-        finally { if (e_53) throw e_53.error; }
+        finally { if (e_52) throw e_52.error; }
     }
     return [result, function (expand) {
-            var e_56, _a;
+            var e_55, _a;
             try {
                 for (var childExpanders_1 = __values(childExpanders), childExpanders_1_1 = childExpanders_1.next(); !childExpanders_1_1.done; childExpanders_1_1 = childExpanders_1.next()) {
                     var f = childExpanders_1_1.value;
                     f(expand);
                 }
             }
-            catch (e_56_1) { e_56 = { error: e_56_1 }; }
+            catch (e_55_1) { e_55 = { error: e_55_1 }; }
             finally {
                 try {
                     if (childExpanders_1_1 && !childExpanders_1_1.done && (_a = childExpanders_1.return)) _a.call(childExpanders_1);
                 }
-                finally { if (e_56) throw e_56.error; }
+                finally { if (e_55) throw e_55.error; }
             }
         }];
 }
@@ -2969,7 +3059,7 @@ function coerceTimeDisplay(s) {
     return undefined;
 }
 function readRadio(name) {
-    var e_57, _a;
+    var e_56, _a;
     var nodes = document.getElementsByName(name);
     try {
         for (var nodes_1 = __values(nodes), nodes_1_1 = nodes_1.next(); !nodes_1_1.done; nodes_1_1 = nodes_1.next()) {
@@ -2979,17 +3069,17 @@ function readRadio(name) {
                 return n.value;
         }
     }
-    catch (e_57_1) { e_57 = { error: e_57_1 }; }
+    catch (e_56_1) { e_56 = { error: e_56_1 }; }
     finally {
         try {
             if (nodes_1_1 && !nodes_1_1.done && (_a = nodes_1.return)) _a.call(nodes_1);
         }
-        finally { if (e_57) throw e_57.error; }
+        finally { if (e_56) throw e_56.error; }
     }
     return null;
 }
 function setRadio(name, value) {
-    var e_58, _a;
+    var e_57, _a;
     var nodes = document.getElementsByName(name);
     try {
         for (var nodes_2 = __values(nodes), nodes_2_1 = nodes_2.next(); !nodes_2_1.done; nodes_2_1 = nodes_2.next()) {
@@ -2998,12 +3088,12 @@ function setRadio(name, value) {
             radio.checked = (radio.value == value);
         }
     }
-    catch (e_58_1) { e_58 = { error: e_58_1 }; }
+    catch (e_57_1) { e_57 = { error: e_57_1 }; }
     finally {
         try {
             if (nodes_2_1 && !nodes_2_1.done && (_a = nodes_2.return)) _a.call(nodes_2);
         }
-        finally { if (e_58) throw e_58.error; }
+        finally { if (e_57) throw e_57.error; }
     }
 }
 export function loadReport() {
@@ -3053,18 +3143,21 @@ export function loadReport() {
                 display(reportAndTotal[0], reportAndTotal[1], params);
             }
         }
-        var credentials, entries, _b, profile, editParams;
+        var credentials, localDB, entries, _b, profile, editParams;
         return __generator(this, function (_c) {
             switch (_c.label) {
                 case 0: return [4 /*yield*/, getCredentials()];
                 case 1:
                     credentials = _c.sent();
-                    _b = EntryList.bind;
-                    return [4 /*yield*/, loadEntries(credentials)];
+                    return [4 /*yield*/, openLocalDatabase()];
                 case 2:
+                    localDB = _c.sent();
+                    _b = EntryList.bind;
+                    return [4 /*yield*/, loadEntries(credentials, localDB)];
+                case 3:
                     entries = new (_b.apply(EntryList, [void 0, _c.sent()]))();
                     profile = loadProfile();
-                    editParams = makeEditParams(entries, credentials);
+                    editParams = makeEditParams(entries, credentials, localDB);
                     $('.reportParamInput').keydown(kd);
                     $('#pageleft').click(function () { return shiftReport(-1); });
                     $('#pageright').click(function () { return shiftReport(1); });

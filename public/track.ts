@@ -299,11 +299,12 @@ function applyAndSave(
     entries:EntryList,
     update:TimeUpdate,
     credentials:Credentials,
+    db:IDBDatabase,
     displayCallback: (du:DisplayUpdate) => void = () => {}
 ) {
     const updates:Entry[] = [];
     applyUpdate(update, entries, updates, displayCallback)
-    saveEntries(updates)
+    saveEntries(updates, db)
     sendUpdates(updates, credentials)
 }
 
@@ -315,17 +316,18 @@ function div(cls:string): HTMLDivElement {
 
 export async function loadTracker(): Promise<void> {
     const credentials:Credentials = await getCredentials()
+    const localDB:IDBDatabase = await openLocalDatabase()
     const profile:Profile = loadProfile()
-    let rawEntries:Entry[] = await loadEntries(credentials)
+    let rawEntries:Entry[] = await loadEntries(credentials, localDB)
     if (rawEntries.length == 0) {
         rawEntries.push(makeNewEntry(now(), undefined, undefined))
-        saveEntries(rawEntries)
+        saveEntries(rawEntries, localDB)
     }
     const entries = new EntryList(rawEntries)
     let focusedIndex:number|null = null;
     const entriesToShow = maxEntriesToShow()
     function callback(update:TimeUpdate) {
-        const displayUpdates = applyAndSave(entries, update, credentials, renderUpdate)
+        const displayUpdates = applyAndSave(entries, update, credentials, localDB, renderUpdate)
     }
     function flip(index:number) { return entries.entries.length - 1 - index }
     
@@ -566,9 +568,9 @@ export async function loadTracker(): Promise<void> {
             if (focusedIndex == null) {
                 focusOnIndex(0)
             } else if (e.keyCode == 38) {
-                focusOnIndex(focusedIndex-1)
+                focusOnIndex(Math.max(focusedIndex-1, 0))
             } else if (e.keyCode == 40) {
-                focusOnIndex(focusedIndex+1)
+                focusOnIndex(Math.min(entries.entries.length-1, focusedIndex+1))
             }
         })
         for (let i = entries.entries.length-1; i >= 0 && i >= entries.entries.length - entriesToShow; i--) {
@@ -593,7 +595,8 @@ function emptyProfile(): Profile {
 
 export async function loadChart() {
     const credentials = await getCredentials()
-    const entries = await loadEntries(credentials)
+    const localDB = await openLocalDatabase()
+    const entries = await loadEntries(credentials, localDB)
     renderChartFromEntries(entries, loadProfile())
 }
 
@@ -702,7 +705,8 @@ function renderBars(entries:Entry[], buckets:Bucket[], profile:Profile) {
 
 export async function loadBars() {
     const credentials = await getCredentials()
-    const entries = await loadEntries(credentials)
+    const localDB = await openLocalDatabase()
+    const entries = await loadEntries(credentials, localDB)
     const buckets = weeklyBuckets()
     renderBars(entries, buckets, loadProfile())
 }
@@ -865,9 +869,77 @@ function renderTime(date:Date): string {
 const entryPrefix = 'entry/'
 const entryPrefixLength = entryPrefix.length
 
+/*
+Old implementation
 function saveEntries(changedEntries:Entry[]) {
     for (const entry of changedEntries) {
         localStorage.setItem(`${entryPrefix}${entry.id}`, serializeEntry(entry))
+    }
+}
+*/
+
+function openLocalDatabase(): Promise<IDBDatabase> {
+    const request = window.indexedDB.open('timetrack', 1)
+    return new Promise(resolve => {
+        request.onupgradeneeded = function(event:any) {
+            const db:IDBDatabase = event.target.result
+            const objectStore = db.createObjectStore("entries", {keyPath: 'id'})
+        }
+        request.onsuccess = function(event:any) {
+            const db:IDBDatabase = event.target.result
+            resolve(db)
+        }
+    })
+}
+
+async function saveEntries(changedEntries:Entry[], db:IDBDatabase): Promise<void> {
+    const transaction = db.transaction(["entries"], "readwrite")
+    const entryStore = transaction.objectStore('entries')
+    for (const entry of changedEntries) {
+        entryStore.put(entry)
+    }
+    return new Promise(resolve => {
+        transaction.oncomplete = function() {resolve()}
+    })
+}
+
+/* code left in as reminder of how to iterate through database 
+async function getLocalEntries(db:IDBDatabase): Promise<Entry[]> {
+    return new Promise(resolve => {
+        const result:Entry[] = []
+        const entryStore = db.transaction(["entries"]).objectStore("entries")
+        entryStore.openCursor().onsuccess = function(event:any) {
+            const cursor:IDBCursorWithValue = event.target.result
+            if (cursor) {
+                result.push(cursor.value)
+            } else {
+                resolve(result)
+            }
+        }
+    })
+}
+*/
+
+async function getLocalEntriesNoMigration(db:IDBDatabase): Promise<Entry[]> {
+    return new Promise(resolve => {
+        var entryStore = db.transaction("entries").objectStore("entries");
+        entryStore.getAll().onsuccess = function(event:any) {
+            resolve(event.target.result);
+        };
+    })
+}
+
+async function getLocalEntries(db:IDBDatabase): Promise<Entry []> {
+    const result:Entry[] = await getLocalEntriesNoMigration(db)
+    if (result.length == 0) return result
+    const s = localStorage.getItem('entries')
+    if (s != null) {
+        const entries = deserializeEntries(s)
+        await saveEntries(entries, db)
+        return entries
+    } else {
+        window.alert("Not yet implemented, sorry! (might not work for new users)")
+        return []
     }
 }
 
@@ -892,6 +964,8 @@ function timeToDateSpecString(date:Date): string {
 }
 
 
+/*
+Old implementation
 export function getLocalEntries(): Entry[] {
     const result:Entry[] = []
     for (const [key, value] of Object.entries(localStorage)) {
@@ -910,13 +984,14 @@ export function getLocalEntries(): Entry[] {
     }
     return result
 }
+*/
 
-async function loadEntries(credentials:Credentials): Promise<Entry[]> {   
-    const localEntries = getLocalEntries()
+async function loadEntries(credentials:Credentials, localDB:IDBDatabase): Promise<Entry[]> {   
+    const localEntries = await getLocalEntries(localDB)
     const remoteEntries = await getRemoteEntries(credentials)
     const merge = mergeAndUpdate(localEntries, remoteEntries)
     sendUpdates(merge.yUpdates, credentials)
-    saveEntries(merge.xUpdates)
+    saveEntries(merge.xUpdates, localDB)
     return merge.merged
 }
 
@@ -1070,18 +1145,19 @@ function loadProfile(): Profile {
 
 export async function loadLabels() {
     const credentials = await getCredentials()
-    const entries = await loadEntries(credentials)
-    showLabels(new EntryList(entries), credentials)
+    const localDB = await openLocalDatabase()
+    const entries = await loadEntries(credentials, localDB)
+    showLabels(new EntryList(entries), credentials, localDB)
     $('#labels').click(hideLabelPopup)
 }
 
-function showLabels(entries:EntryList, credentials:Credentials) {
+function showLabels(entries:EntryList, credentials:Credentials, localDB:IDBDatabase) {
     const labels:Label[] = getDistinctLabels(entries)
     const profile = loadProfile()
     labels.sort()
     function callback(update:TimeUpdate) {
-        applyAndSave(entries, update, credentials)
-        showLabels(entries, credentials)
+        applyAndSave(entries, update, credentials, localDB)
+        showLabels(entries, credentials, localDB)
     }
     function makeLabelDiv(label:Label): JQE {
         const colorHex = colorToHex(getColor(label, profile))
@@ -1112,9 +1188,10 @@ export async function loadCalendar() {
         hideCalPopup()
     })
     const credentials = await getCredentials()
-    let entries = new EntryList(await loadEntries(credentials))
+    const localDB = await openLocalDatabase()
+    const entries = new EntryList(await loadEntries(credentials, localDB))
     function callback(update:TimeUpdate) {
-        applyAndSave(entries, update, credentials)
+        applyAndSave(entries, update, credentials, localDB)
     }
     showCalendar(entries, null, loadProfile(), callback)
 }
@@ -2124,9 +2201,9 @@ interface EditParams {
     entries:EntryList,
 }
 
-function makeEditParams(entries:EntryList, credentials:Credentials): EditParams {
+function makeEditParams(entries:EntryList, credentials:Credentials, localDB:IDBDatabase): EditParams {
     function callback(update:TimeUpdate) {
-        applyAndSave(entries, update, credentials)
+        applyAndSave(entries, update, credentials, localDB)
     }
     return {callback: callback, entries: entries, redraw: () => {}}
 }
@@ -2295,9 +2372,10 @@ function setRadio(name:string, value:string): void {
 
 export async function loadReport() {
     const credentials = await getCredentials()
-    const entries = new EntryList(await loadEntries(credentials))
+    const localDB = await openLocalDatabase()
+    const entries = new EntryList(await loadEntries(credentials, localDB))
     const profile = loadProfile()
-    const editParams = makeEditParams(entries, credentials)
+    const editParams = makeEditParams(entries, credentials, localDB)
     function paramsFromInput(): ReportParams {
         return {
             start: $('#startDate').val() as string|undefined,
