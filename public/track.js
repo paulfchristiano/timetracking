@@ -1539,12 +1539,22 @@ function sortAndFilter(entries) {
     result.sort(function (x, y) { return x.time.getTime() - y.time.getTime(); });
     return result;
 }
+function dayOfWeeksAgo(dayOfWeek, weeksAgo) {
+    if (weeksAgo === void 0) { weeksAgo = 0; }
+    var result = new Date();
+    var currentDay = result.getDay();
+    if (currentDay == 0)
+        currentDay = 7;
+    return daysAgo(currentDay - dayOfWeek - 1 + 7 * weeksAgo);
+}
 //TODO less sort and filter...
-function showCalendar(entries, initialPopup, profile, callback) {
+function showCalendar(entries, initialPopup, profile, callback, weeksAgo) {
     var e_22, _a, e_23, _b;
+    if (weeksAgo === void 0) { weeksAgo = 0; }
+    console.log(weeksAgo);
     var days = [];
     for (var i = 0; i < 7; i++) {
-        var d = daysAgo(6 - i);
+        var d = dayOfWeeksAgo(i, weeksAgo);
         $("#headerrow th:nth-child(" + (i + 2) + ")").text(renderDay(d));
         days.push({ start: startOfDay(d), end: endOfDay(d), index: i });
     }
@@ -1557,6 +1567,15 @@ function showCalendar(entries, initialPopup, profile, callback) {
         }
         return f;
     }
+    $('#leftbutton').unbind('click');
+    $('#leftbutton').click(function () {
+        console.log('!!!');
+        showCalendar(entries, null, profile, callback, weeksAgo + 1);
+    });
+    $('#rightbutton').unbind('click');
+    $('#rightbutton').click(function () {
+        showCalendar(entries, null, profile, callback, weeksAgo - 1);
+    });
     function popup(startEntry, endEntry) {
         zoomedPopup(entries, startEntry, endEntry, profile, popup, popupCallback([startEntry, endEntry]));
     }

@@ -1202,16 +1202,25 @@ function sortAndFilter(entries:Entry[]): Entry[] {
     return result
 }
 
+function dayOfWeeksAgo(dayOfWeek:number, weeksAgo:number=0) {
+    const result = new Date()
+    let currentDay = result.getDay()
+    if (currentDay == 0) currentDay = 7
+    return daysAgo(currentDay-dayOfWeek-1 + 7 * weeksAgo)
+}
+
 //TODO less sort and filter...
 function showCalendar(
     entries:EntryList,
     initialPopup: [uid, uid]|null,
     profile:Profile,
     callback: (t:TimeUpdate) => void,
+    weeksAgo:number=0,
 ): void {
+    console.log(weeksAgo)
     const days:CalendarDay[] = []
     for (let i = 0; i < 7; i++) {
-        const d = daysAgo(6-i)
+        const d = dayOfWeeksAgo(i, weeksAgo)
         $(`#headerrow th:nth-child(${i+2})`).text(renderDay(d))
         days.push({start: startOfDay(d), end: endOfDay(d), index: i})
     }
@@ -1224,6 +1233,15 @@ function showCalendar(
         }
         return f
     }
+    $('#leftbutton').unbind('click')
+    $('#leftbutton').click(function() {
+        console.log('!!!')
+        showCalendar(entries, null, profile, callback, weeksAgo+1)
+    })
+    $('#rightbutton').unbind('click')
+    $('#rightbutton').click(function() {
+        showCalendar(entries, null, profile, callback, weeksAgo-1)
+    })
     function popup(startEntry:uid, endEntry:uid) {
         zoomedPopup(
             entries, startEntry, endEntry,
