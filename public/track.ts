@@ -900,6 +900,7 @@ async function saveEntries(changedEntries:Entry[], db:IDBDatabase): Promise<void
     for (const entry of changedEntries) {
         entryStore.put(entry)
     }
+    transaction.commit()
     return new Promise(resolve => {
         transaction.oncomplete = function() {resolve()}
     })

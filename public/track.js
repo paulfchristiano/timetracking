@@ -1185,6 +1185,7 @@ function saveEntries(changedEntries, db) {
                 }
                 finally { if (e_18) throw e_18.error; }
             }
+            transaction.commit();
             return [2 /*return*/, new Promise(function (resolve) {
                     transaction.oncomplete = function () { resolve(); };
                 })];
