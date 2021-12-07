@@ -295,7 +295,7 @@ function parseTime(s:string, anchor:Date, rel:'next'|'previous'|'closest'): Date
     return specToDate(m[0], anchor, rel)
 }
 
-async function applyAndSave(
+function applyAndSave(
     entries:EntryList,
     update:TimeUpdate,
     credentials:Credentials,
@@ -304,10 +304,8 @@ async function applyAndSave(
 ) {
     const updates:Entry[] = [];
     applyUpdate(update, entries, updates, displayCallback)
-    await saveEntries(updates, db)
-    console.log(`saved, now sending updates`)
+    saveEntries(updates, db)
     sendUpdates(updates, credentials)
-    console.log(`sent updates`)
 }
 
 function div(cls:string): HTMLDivElement {
@@ -934,7 +932,7 @@ async function getLocalEntriesNoMigration(db:IDBDatabase): Promise<Entry[]> {
 
 async function getLocalEntries(db:IDBDatabase): Promise<Entry []> {
     const result:Entry[] = await getLocalEntriesNoMigration(db)
-    if (result.length == 0) return result
+    if (result.length > 0) return result
     const s = localStorage.getItem('entries')
     if (s != null) {
         const entries = deserializeEntries(s)
@@ -1220,7 +1218,6 @@ function showCalendar(
     callback: (t:TimeUpdate) => void,
     weeksAgo:number=0,
 ): void {
-    console.log(weeksAgo)
     const days:CalendarDay[] = []
     for (let i = 0; i < 7; i++) {
         const d = dayOfWeeksAgo(i, weeksAgo)
@@ -1238,7 +1235,6 @@ function showCalendar(
     }
     $('#leftbutton').unbind('click')
     $('#leftbutton').click(function() {
-        console.log('!!!')
         showCalendar(entries, null, profile, callback, weeksAgo+1)
     })
     $('#rightbutton').unbind('click')
@@ -1672,14 +1668,10 @@ function applyUpdate(
                 update.labelBefore || update.before.after || update.after.before,
                 update.labelAfter || update.after.before || update.before.after,
             )
-            console.log(entries.entries.length)
             upsert(newEntry)
-            console.log(entries.entries.length)
             display({kind: 'insert', entry:newEntry})
             if (update.labelBefore !== undefined) {
-                console.log(entries.entries.length)
                 upsert({...entries.refresh(update.before), after: update.labelBefore})
-                console.log(entries.entries.length)
                 display({kind: 'relabel', before: update.before})
             } if (update.labelAfter !== undefined) {
                 upsert({...entries.refresh(update.after), before: update.labelAfter})
@@ -2012,11 +2004,8 @@ export function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdat
 function sendUpdates(updates:Entry[], credentials:Credentials) {
     const s = encodeURIComponent(serializeEntries(updates))
     try {
-        console.log('about to post')
-        $.post(`update?${credentialParams(credentials)}`, `entries=${s}`).catch(error => console.log('promise error caught'))
-        console.log('posted successfully?')
+        $.post(`update?${credentialParams(credentials)}`, `entries=${s}`).catch(error => console.log(error))
     } catch(error) {
-        console.log('caught error')
         console.log(error)
     }
 }

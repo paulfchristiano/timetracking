@@ -395,23 +395,10 @@ function parseTime(s, anchor, rel) {
 }
 function applyAndSave(entries, update, credentials, db, displayCallback) {
     if (displayCallback === void 0) { displayCallback = function () { }; }
-    return __awaiter(this, void 0, void 0, function () {
-        var updates;
-        return __generator(this, function (_a) {
-            switch (_a.label) {
-                case 0:
-                    updates = [];
-                    applyUpdate(update, entries, updates, displayCallback);
-                    return [4 /*yield*/, saveEntries(updates, db)];
-                case 1:
-                    _a.sent();
-                    console.log("saved, now sending updates");
-                    sendUpdates(updates, credentials);
-                    console.log("sent updates");
-                    return [2 /*return*/];
-            }
-        });
-    });
+    var updates = [];
+    applyUpdate(update, entries, updates, displayCallback);
+    saveEntries(updates, db);
+    sendUpdates(updates, credentials);
 }
 function div(cls) {
     var result = document.createElement('div');
@@ -1228,7 +1215,7 @@ function getLocalEntries(db) {
                 case 0: return [4 /*yield*/, getLocalEntriesNoMigration(db)];
                 case 1:
                     result = _a.sent();
-                    if (result.length == 0)
+                    if (result.length > 0)
                         return [2 /*return*/, result];
                     s = localStorage.getItem('entries');
                     if (!(s != null)) return [3 /*break*/, 3];
@@ -1565,7 +1552,6 @@ function dayOfWeeksAgo(dayOfWeek, weeksAgo) {
 function showCalendar(entries, initialPopup, profile, callback, weeksAgo) {
     var e_22, _a, e_23, _b;
     if (weeksAgo === void 0) { weeksAgo = 0; }
-    console.log(weeksAgo);
     var days = [];
     for (var i = 0; i < 7; i++) {
         var d = dayOfWeeksAgo(i, weeksAgo);
@@ -1583,7 +1569,6 @@ function showCalendar(entries, initialPopup, profile, callback, weeksAgo) {
     }
     $('#leftbutton').unbind('click');
     $('#leftbutton').click(function () {
-        console.log('!!!');
         showCalendar(entries, null, profile, callback, weeksAgo + 1);
     });
     $('#rightbutton').unbind('click');
@@ -2077,14 +2062,10 @@ function applyUpdate(update, entries, updatedEntries, displayCallback) {
             break;
         case 'split':
             var newEntry = makeNewEntry(update.time, update.labelBefore || update.before.after || update.after.before, update.labelAfter || update.after.before || update.before.after);
-            console.log(entries.entries.length);
             upsert(newEntry);
-            console.log(entries.entries.length);
             display({ kind: 'insert', entry: newEntry });
             if (update.labelBefore !== undefined) {
-                console.log(entries.entries.length);
                 upsert(__assign(__assign({}, entries.refresh(update.before)), { after: update.labelBefore }));
-                console.log(entries.entries.length);
                 display({ kind: 'relabel', before: update.before });
             }
             if (update.labelAfter !== undefined) {
@@ -2653,12 +2634,9 @@ export function mergeAndUpdate(xs, ys) {
 function sendUpdates(updates, credentials) {
     var s = encodeURIComponent(serializeEntries(updates));
     try {
-        console.log('about to post');
-        $.post("update?" + credentialParams(credentials), "entries=" + s).catch(function (error) { return console.log('promise error caught'); });
-        console.log('posted successfully?');
+        $.post("update?" + credentialParams(credentials), "entries=" + s).catch(function (error) { return console.log(error); });
     }
     catch (error) {
-        console.log('caught error');
         console.log(error);
     }
 }
