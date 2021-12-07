@@ -2012,7 +2012,7 @@ function sendUpdates(updates:Entry[], credentials:Credentials) {
     const s = encodeURIComponent(serializeEntries(updates))
     try {
         console.log('about to post')
-        $.post(`update?${credentialParams(credentials)}`, `entries=${s}`)
+        $.post(`update?${credentialParams(credentials)}`, `entries=${s}`).catch(error => console.log('promise error caught'))
         console.log('posted successfully?')
     } catch(error) {
         console.log('caught error')

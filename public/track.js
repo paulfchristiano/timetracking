@@ -2653,7 +2653,7 @@ function sendUpdates(updates, credentials) {
     var s = encodeURIComponent(serializeEntries(updates));
     try {
         console.log('about to post');
-        $.post("update?" + credentialParams(credentials), "entries=" + s);
+        $.post("update?" + credentialParams(credentials), "entries=" + s).catch(function (error) { return console.log('promise error caught'); });
         console.log('posted successfully?');
     }
     catch (error) {
