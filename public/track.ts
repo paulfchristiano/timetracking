@@ -295,7 +295,7 @@ function parseTime(s:string, anchor:Date, rel:'next'|'previous'|'closest'): Date
     return specToDate(m[0], anchor, rel)
 }
 
-function applyAndSave(
+async function applyAndSave(
     entries:EntryList,
     update:TimeUpdate,
     credentials:Credentials,
@@ -304,8 +304,9 @@ function applyAndSave(
 ) {
     const updates:Entry[] = [];
     applyUpdate(update, entries, updates, displayCallback)
-    saveEntries(updates, db)
-    sendUpdates(updates, credentials)
+    await saveEntries(updates, db)
+    console.log(`saved ${updates}`)
+    await sendUpdates(updates, credentials)
 }
 
 function div(cls:string): HTMLDivElement {

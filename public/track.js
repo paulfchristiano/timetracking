@@ -395,10 +395,24 @@ function parseTime(s, anchor, rel) {
 }
 function applyAndSave(entries, update, credentials, db, displayCallback) {
     if (displayCallback === void 0) { displayCallback = function () { }; }
-    var updates = [];
-    applyUpdate(update, entries, updates, displayCallback);
-    saveEntries(updates, db);
-    sendUpdates(updates, credentials);
+    return __awaiter(this, void 0, void 0, function () {
+        var updates;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    updates = [];
+                    applyUpdate(update, entries, updates, displayCallback);
+                    return [4 /*yield*/, saveEntries(updates, db)];
+                case 1:
+                    _a.sent();
+                    console.log("saved " + updates);
+                    return [4 /*yield*/, sendUpdates(updates, credentials)];
+                case 2:
+                    _a.sent();
+                    return [2 /*return*/];
+            }
+        });
+    });
 }
 function div(cls) {
     var result = document.createElement('div');
