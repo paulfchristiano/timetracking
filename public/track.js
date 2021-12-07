@@ -405,10 +405,9 @@ function applyAndSave(entries, update, credentials, db, displayCallback) {
                     return [4 /*yield*/, saveEntries(updates, db)];
                 case 1:
                     _a.sent();
-                    console.log("saved " + updates);
-                    return [4 /*yield*/, sendUpdates(updates, credentials)];
-                case 2:
-                    _a.sent();
+                    console.log("saved, now sending updates");
+                    sendUpdates(updates, credentials);
+                    console.log("sent updates");
                     return [2 /*return*/];
             }
         });
@@ -2652,7 +2651,12 @@ export function mergeAndUpdate(xs, ys) {
 }
 function sendUpdates(updates, credentials) {
     var s = encodeURIComponent(serializeEntries(updates));
-    $.post("update?" + credentialParams(credentials), "entries=" + s);
+    try {
+        $.post("update?" + credentialParams(credentials), "entries=" + s);
+    }
+    catch (error) {
+        console.log(error);
+    }
 }
 function getRemoteEntries(credentials) {
     return __awaiter(this, void 0, void 0, function () {

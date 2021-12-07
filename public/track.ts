@@ -305,8 +305,9 @@ async function applyAndSave(
     const updates:Entry[] = [];
     applyUpdate(update, entries, updates, displayCallback)
     await saveEntries(updates, db)
-    console.log(`saved ${updates}`)
-    await sendUpdates(updates, credentials)
+    console.log(`saved, now sending updates`)
+    sendUpdates(updates, credentials)
+    console.log(`sent updates`)
 }
 
 function div(cls:string): HTMLDivElement {
@@ -2009,7 +2010,11 @@ export function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdat
 
 function sendUpdates(updates:Entry[], credentials:Credentials) {
     const s = encodeURIComponent(serializeEntries(updates))
-    $.post(`update?${credentialParams(credentials)}`, `entries=${s}`)
+    try {
+        $.post(`update?${credentialParams(credentials)}`, `entries=${s}`)
+    } catch(error) {
+        console.log(error)
+    }
 }
 
 async function getRemoteEntries(credentials:Credentials): Promise<Entry[]> {
