@@ -2011,8 +2011,11 @@ export function mergeAndUpdate(xs:Entry[], ys:Entry[]): {merged: Entry[], xUpdat
 function sendUpdates(updates:Entry[], credentials:Credentials) {
     const s = encodeURIComponent(serializeEntries(updates))
     try {
+        console.log('about to post')
         $.post(`update?${credentialParams(credentials)}`, `entries=${s}`)
+        console.log('posted successfully?')
     } catch(error) {
+        console.log('caught error')
         console.log(error)
     }
 }
